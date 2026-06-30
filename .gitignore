@@ -1,0 +1,14 @@
+# Build artifacts
+/bin/
+
+# Clojure / JVM
+server/.cpcache/
+server/target/
+server/.nrepl-port
+
+# Go
+client/myrag
+
+# Editor / OS
+.DS_Store
+*.swp
