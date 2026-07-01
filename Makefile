@@ -1,9 +1,12 @@
-.PHONY: build client server-deps run stop status test clean
+.PHONY: build client check-server server-deps run stop status test test-client test-server clean
 
 build: client ## Build the Go client into bin/myrag
 
 client: ## Compile the Go CLI
 	go build -C client -o ../bin/myrag .
+
+check-server: ## Compile-check every server namespace (no boot, no artifact)
+	cd server && clojure -M -e "(run! require '[rag.config rag.main rag.http rag.index rag.index.walker rag.index.extractor rag.index.chunker rag.index.lucene]) (println \"server namespaces compiled OK\")"
 
 server-deps: ## Pre-fetch the server's JVM dependencies
 	cd server && clojure -P
@@ -17,8 +20,13 @@ stop: ## Stop the server
 status: ## Show server status
 	./bin/myrag status
 
-test: ## Run Go tests
+test: test-client test-server ## Run all tests
+
+test-client: ## Run Go tests
 	go test -C client ./...
+
+test-server: check-server ## Compile-check then run Clojure tests
+	cd server && clojure -M:test
 
 clean: ## Remove build artifacts
 	rm -rf bin

@@ -8,6 +8,7 @@
 (def myrag-dir (io/file home-dir ".myrag"))
 (def port-file (io/file myrag-dir "server.port"))
 (def pid-file  (io/file myrag-dir "server.pid"))
+(def index-dir (io/file myrag-dir "index"))
 
 (defn ensure-dir! []
   (.mkdirs myrag-dir))

@@ -4,6 +4,7 @@
   can find us. The client owns process lifecycle; /shutdown handles exit."
   (:require [rag.http :as http]
             [rag.config :as config]
+            [rag.index :as index]
             [ring.adapter.jetty :as jetty])
   (:gen-class))
 
@@ -17,6 +18,8 @@
         port   (.getLocalPort (first (.getConnectors server)))]
     (write-port! port)
     (.addShutdownHook (Runtime/getRuntime)
-                      (Thread. (fn [] (.delete config/port-file))))
+                      (Thread. (fn []
+                                 (index/close!)
+                                 (.delete config/port-file))))
     (println "myrag server listening on port" port)
     (.join server)))

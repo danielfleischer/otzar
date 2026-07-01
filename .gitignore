@@ -9,6 +9,8 @@ server/.nrepl-port
 # Go
 client/myrag
 
-# Editor / OS
+# Editor / tooling caches
+.clj-kondo/.cache/
+.lsp/
 .DS_Store
 *.swp

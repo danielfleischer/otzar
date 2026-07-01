@@ -1,8 +1,15 @@
 {:paths ["src" "resources"]
  :deps
- {org.clojure/clojure        {:mvn/version "1.12.0"}
-  ring/ring-jetty-adapter    {:mvn/version "1.12.1"}
-  metosin/reitit-ring        {:mvn/version "0.7.0"}
-  metosin/jsonista           {:mvn/version "0.3.8"}}
+ {org.clojure/clojure                      {:mvn/version "1.12.5"}
+  ring/ring-jetty-adapter                  {:mvn/version "1.15.5"}
+  metosin/reitit-ring                      {:mvn/version "0.10.1"}
+  metosin/jsonista                         {:mvn/version "1.0.0"}
+  org.apache.lucene/lucene-core            {:mvn/version "10.5.0"}
+  org.apache.lucene/lucene-analysis-common {:mvn/version "10.5.0"}
+  org.apache.lucene/lucene-queryparser     {:mvn/version "10.5.0"}}
  :aliases
- {:run {:main-opts ["-m" "rag.main"]}}}
+ {:run  {:main-opts ["-m" "rag.main"]}
+  :test {:extra-paths ["test"]
+         :extra-deps  {io.github.cognitect-labs/test-runner
+                       {:git/sha "3f288f1f16d167723ad87cc35b1dfee3c1681e10"}}
+         :main-opts   ["-m" "cognitect.test-runner"]}}}
