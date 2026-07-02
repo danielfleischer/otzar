@@ -107,9 +107,12 @@ func Start(timeout time.Duration) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dir(), 0o755); err != nil {
+	if err := os.MkdirAll(dir(), 0o700); err != nil {
 		return err
 	}
+	// Lock ~/.myrag to the owner, tightening it even if it pre-existed with
+	// looser bits (MkdirAll won't chmod an existing dir).
+	_ = os.Chmod(dir(), 0o700)
 	// Drop any stale port file so we don't race against an old value.
 	_ = os.Remove(PortFile())
 
