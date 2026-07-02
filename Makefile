@@ -1,4 +1,4 @@
-.PHONY: build client check-server server-deps run stop status test test-client test-server clean
+.PHONY: build client check-server server-deps run stop status test test-client test-server clean clear-index
 
 build: client ## Build the Go client into bin/myrag
 
@@ -30,3 +30,8 @@ test-server: check-server ## Compile-check then run Clojure tests
 
 clean: ## Remove build artifacts
 	rm -rf bin
+
+clear-index: ## Stop the server if running, then delete the on-disk index (~/.myrag/index)
+	@./bin/myrag stop 2>/dev/null || true
+	rm -rf ~/.myrag/index
+	@echo "index cleared"
