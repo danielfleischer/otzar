@@ -1,21 +1,18 @@
 (ns rag.index.lucene
-  "★ THE LUCENE CORE — this is your bit. ★
-
-  Everything else in the server is already wired up and calls the six functions
-  below. The HTTP handlers (rag.http) and the walk→extract→chunk pipeline
-  (rag.index) never touch Lucene directly — they go through here. Fill in the
-  bodies and M1 keyword search works end-to-end.
+  "The Lucene core. Everything else in the server goes through the six functions
+  below — the HTTP handlers (rag.http) and the walk→extract→chunk pipeline
+  (rag.index) never touch Lucene directly.
 
   ─────────────────────────────────────────────────────────────────────────────
   The component
   ─────────────────────────────────────────────────────────────────────────────
-  `open` returns an opaque value (a map is idiomatic) that the rest of the server
-  threads back into the other functions and finally into `close`. It should hold
-  whatever long-lived Lucene objects you need — typically:
-    - an IndexWriter (Lucene's invariant: exactly one writer per index dir), and
-    - a SearcherManager for lock-free, refreshable reads.
-  rag.index opens it lazily on first use and holds the single instance, so you
-  don't need your own singleton.
+  `open` returns a map holding the long-lived Lucene objects that the rest of the
+  server threads back into the other functions and finally into `close`:
+    :dir      the FSDirectory
+    :analyzer the StandardAnalyzer (shared by writer + query parser)
+    :writer   the single IndexWriter (Lucene's invariant: one writer per dir)
+    :manager  a SearcherManager for lock-free, refreshable reads
+  rag.index opens it lazily on first use and holds the single instance.
 
   ─────────────────────────────────────────────────────────────────────────────
   Chunk map (input to add-chunks!) — one Lucene document per chunk
@@ -28,15 +25,14 @@
      :chunk_idx 7                         ; int, position within the source doc
      :text      \"...chunk text...\"}
 
-  Suggested field mapping (docs/rag-project-plan.md §4.1 — the M1 subset):
+  Field mapping (docs/rag-project-plan.md §4.1 — the M1 subset):
     id        StringField        stored, indexed (not analyzed)
     doc_id    StringField        stored, indexed
     path      StringField        stored, indexed
-    ext       StringField        indexed (stored optional)
-    mtime     LongPoint + stored (NumericDocValuesField too, for later sorting/filter)
-    chunk_idx IntPoint  + stored
+    ext       StringField        stored, indexed (only when non-nil)
+    mtime     LongPoint (range) + StoredField (retrieval) + NumericDocValues (sort)
+    chunk_idx IntPoint (range)  + StoredField (retrieval)
     text      TextField          stored, indexed  ← the only analyzed field; BM25 here
-  (embedding + tags fields arrive in M3/M8 — ignore them for now.)
 
   ─────────────────────────────────────────────────────────────────────────────
   Hit map (output of keyword-search) — best first
@@ -45,64 +41,114 @@
      :text \"...\" :chunk_idx 7 :mtime 1712345678000}
   Keys are serialized to JSON verbatim, so keep them exactly as above.
 
-  ─────────────────────────────────────────────────────────────────────────────
-  Notes
-  ─────────────────────────────────────────────────────────────────────────────
-  - `stats` is called by GET /stats even when nothing has been indexed; return
-    {:num_docs <distinct doc_id count> :num_chunks <total docs>}. num_chunks is
-    just the live doc count; num_docs needs distinct doc_id values (a terms enum
-    over the doc_id field, or track it yourself).
-  - Deletion/reindex by doc_id is M5 — no need to handle updates now; assume a
-    fresh or additive index.
-  - Heads-up (your call, it's your lane): this project runs on a very new JDK, and
-    Lucene 9.11's MMapDirectory path may complain there. If it does, either pin a
-    JDK for the server or bump Lucene. See the note in ~/.myrag memory.
-
-  Likely imports when you implement:
-    [org.apache.lucene.store FSDirectory]
-    [org.apache.lucene.index IndexWriter IndexWriterConfig DirectoryReader Term]
-    [org.apache.lucene.document Document StringField TextField LongPoint IntPoint
-                                Field$Store StoredField]
-    [org.apache.lucene.analysis.standard StandardAnalyzer]
-    [org.apache.lucene.search SearcherManager IndexSearcher]
-    [org.apache.lucene.queryparser.classic QueryParser]")
-
-(defn- todo [fn-name]
-  (throw (UnsupportedOperationException.
-          (str "rag.index.lucene/" fn-name
-               " is not implemented yet — this is the Lucene core to fill in."))))
+  Notes:
+  - BM25 is Lucene's default similarity, so keyword-search scores are BM25.
+  - The query string is escaped before parsing so natural-language queries (with
+    `?`, `*`, etc.) match literally instead of being read as wildcard syntax.
+  - Deletion/reindex by doc_id is M5 — this assumes a fresh or additive index."
+  (:import [org.apache.lucene.store FSDirectory]
+           [org.apache.lucene.index IndexWriter IndexWriterConfig MultiTerms Term]
+           [org.apache.lucene.document Document Field$Store StringField TextField
+            LongPoint IntPoint StoredField NumericDocValuesField]
+           [org.apache.lucene.analysis.standard StandardAnalyzer]
+           [org.apache.lucene.search SearcherManager SearcherFactory]
+           [org.apache.lucene.queryparser.classic QueryParser]))
 
 (defn open
   "Open (creating if absent) the Lucene index rooted at `dir` (a java.io.File).
-  Return the component the other fns receive."
+  Return the component map the other fns receive."
   [dir]
-  (todo "open"))
+  (let [directory (FSDirectory/open (.toPath dir))
+        analyzer  (StandardAnalyzer.)
+        writer    (IndexWriter. directory (IndexWriterConfig. analyzer))
+        manager   (SearcherManager. writer (SearcherFactory.))]
+    {:dir directory :analyzer analyzer :writer writer :manager manager}))
+
+(defn- chunk->doc ^Document [{:keys [id doc_id path ext mtime chunk_idx text]}]
+  (let [doc (Document.)]
+    (.add doc (StringField. "id" id Field$Store/YES))
+    (.add doc (StringField. "doc_id" doc_id Field$Store/YES))
+    (.add doc (StringField. "path" path Field$Store/YES))
+    (when ext
+      (.add doc (StringField. "ext" ext Field$Store/YES)))
+    (.add doc (LongPoint. "mtime" (long-array [mtime])))
+    (.add doc (StoredField. "mtime" (long mtime)))
+    (.add doc (NumericDocValuesField. "mtime" (long mtime)))
+    (.add doc (IntPoint. "chunk_idx" (int-array [chunk_idx])))
+    (.add doc (StoredField. "chunk_idx" (int chunk_idx)))
+    (.add doc (TextField. "text" text Field$Store/YES))
+    doc))
 
 (defn add-chunks!
-  "Add a seq of chunk maps (shape above) to the index as one document each.
+  "Add a seq of chunk maps to the index, one document per chunk. Idempotent per
+  source file: chunks are grouped by :doc_id and each group atomically *replaces*
+  any existing documents with that doc_id (via updateDocuments), so re-indexing a
+  file swaps in its current chunks instead of stacking duplicates on the old ones.
   Does not commit — rag.index calls `commit!` once per /index batch."
-  [component chunks]
-  (todo "add-chunks!"))
+  [{:keys [^IndexWriter writer]} chunks]
+  (doseq [[doc-id group] (group-by :doc_id chunks)]
+    (.updateDocuments writer (Term. "doc_id" ^String doc-id) (map chunk->doc group))))
 
 (defn commit!
   "Flush pending additions so they become searchable and durable, then refresh
-  readers (e.g. SearcherManager.maybeRefresh)."
-  [component]
-  (todo "commit!"))
+  readers."
+  [{:keys [^IndexWriter writer ^SearcherManager manager]}]
+  (.commit writer)
+  (.maybeRefreshBlocking manager))
+
+(defn- ^long field-long [^Document doc ^String name]
+  (.longValue (.numericValue (.getField doc name))))
+
+(defn- ^long field-int [^Document doc ^String name]
+  (.intValue (.numericValue (.getField doc name))))
 
 (defn keyword-search
   "BM25 search over the `text` field for query string `q`; return up to `k` hit
-  maps (shape above), best first. Filters are M4 — ignore for now."
-  [component q k]
-  (todo "keyword-search"))
+  maps, best first. Filters are M4 — ignored for now."
+  [{:keys [^StandardAnalyzer analyzer ^SearcherManager manager]} q k]
+  (let [parser   (QueryParser. "text" analyzer)
+        query    (.parse parser (QueryParser/escape q))
+        searcher (.acquire manager)]
+    (try
+      (let [top    (.search searcher query (int k))
+            stored (.storedFields searcher)]
+        (mapv (fn [sd]
+                (let [doc (.document stored (.doc sd))]
+                  {:id        (.get doc "id")
+                   :doc_id    (.get doc "doc_id")
+                   :path      (.get doc "path")
+                   :score     (.score sd)
+                   :text      (.get doc "text")
+                   :chunk_idx (field-int doc "chunk_idx")
+                   :mtime     (field-long doc "mtime")}))
+              (.scoreDocs top)))
+      (finally
+        (.release manager searcher)))))
+
+(defn- distinct-terms
+  "Count distinct indexed values of `field` across the reader."
+  ^long [reader ^String field]
+  (if-let [terms (MultiTerms/getTerms reader field)]
+    (let [it (.iterator terms)]
+      (loop [n 0]
+        (if (nil? (.next it)) n (recur (inc n)))))
+    0))
 
 (defn stats
   "Return {:num_docs <distinct doc_id count> :num_chunks <live doc count>}."
-  [component]
-  (todo "stats"))
+  [{:keys [^SearcherManager manager]}]
+  (let [searcher (.acquire manager)]
+    (try
+      (let [reader (.getIndexReader searcher)]
+        {:num_docs   (distinct-terms reader "doc_id")
+         :num_chunks (.numDocs reader)})
+      (finally
+        (.release manager searcher)))))
 
 (defn close
-  "Commit and release everything (writer, readers, directory). Called on server
+  "Commit and release everything (manager, writer, directory). Called on server
   shutdown."
-  [component]
-  (todo "close"))
+  [{:keys [^SearcherManager manager ^IndexWriter writer dir]}]
+  (.close manager)
+  (.close writer)
+  (.close ^java.io.Closeable dir))
