@@ -42,7 +42,7 @@
           mtime  (.lastModified f)
           ext    (walker/ext f)
           chunks (chunker/pack (segmenter/segment text))
-          vecs   (embed/embed-batch (map :text chunks))]
+          vecs   (embed/embed-documents (.getName f) (map :text chunks))]
       (mapv (fn [{:keys [chunk_idx text]} embedding]
               {:id        (str doc-id ":" chunk_idx)
                :doc_id    doc-id
@@ -83,7 +83,7 @@
   [{:keys [q k mode] :or {k 10 mode "keyword"}}]
   {:hits (case mode
            "keyword" (lucene/keyword-search (ensure!) q k)
-           "vector"  (lucene/vector-search (ensure!) (embed/embed-one q) k)
+           "vector"  (lucene/vector-search (ensure!) (embed/embed-query q) k)
            (throw (ex-info (str "mode \"" mode "\" not supported yet (have: keyword, vector)")
                            {:type :unsupported-mode :mode mode})))})
 

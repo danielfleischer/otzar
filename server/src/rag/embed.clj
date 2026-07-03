@@ -54,16 +54,36 @@
 (defn- ->floats ^floats [row]
   (float-array (map float row)))
 
-(defn embed-batch
-  "Embed a seq of strings in a single request; return a vector of float-arrays,
-  one per input, in the same order. Empty input → [] (no request made)."
-  [texts]
-  (let [texts (vec texts)]
-    (if (empty? texts)
-      []
-      (mapv ->floats (:embeddings (post-embed texts))))))
+;; EmbeddingGemma is trained with asymmetric task prompts — the *same* text must
+;; be embedded differently as a stored document vs. a search query, or the two
+;; vector spaces don't line up. Formats are verbatim from the model card:
+;; https://ai.google.dev/gemma/docs/embeddinggemma/model_card#prompt-instructions
+;; (embeddinggemma-specific; revisit these if MYRAG_EMBED_MODEL changes.)
+(def ^:private query-prompt "task: search result | query: ")
 
-(defn embed-one
-  "Embed a single string; return one float-array."
+(defn- document-prompt
+  "EmbeddingGemma's document prompt, using the source file name as the title slot."
+  [title text]
+  (str "title: " title " | text: " text))
+
+(defn- embed-prepared
+  "Embed a seq of already-prompt-prefixed strings in one request; return a vector
+  of float-arrays, one per input, in order. Empty input → [] (no request made)."
+  [prepared]
+  (let [prepared (vec prepared)]
+    (if (empty? prepared)
+      []
+      (mapv ->floats (:embeddings (post-embed prepared))))))
+
+(defn embed-documents
+  "Embed chunk texts for *storage* (indexing side), applying the document prompt
+  with `title` (the source file name) so the vectors carry a little document
+  context. Returns a vector of float-arrays, one per input, in order."
+  [title texts]
+  (embed-prepared (map #(document-prompt title %) texts)))
+
+(defn embed-query
+  "Embed a single search string for *retrieval*, applying the query prompt.
+  Returns one float-array."
   ^floats [text]
-  (first (embed-batch [text])))
+  (first (embed-prepared [(str query-prompt text)])))
