@@ -1,0 +1,7 @@
+#+title: TODO
+#+author: Daniel Fleischer
+#+language: en
+
+1. [ ] client lifecycle of ollama.
+2. [ ] indexing status: files, progress bar.
+3. [ ] ollama request timed out during long indexing sessions.

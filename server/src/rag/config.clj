@@ -9,7 +9,6 @@
 (def home-dir (System/getProperty "user.home"))
 (def myrag-dir (io/file home-dir ".myrag"))
 (def port-file (io/file myrag-dir "server.port"))
-(def pid-file  (io/file myrag-dir "server.pid"))
 (def index-dir (io/file myrag-dir "index"))
 
 (def ^:private owner-only
