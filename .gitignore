@@ -10,7 +10,7 @@ server/.nrepl-port
 client/myrag
 
 # Editor / tooling caches
-.clj-kondo/.cache/
+.clj-kondo
 .lsp/
 .DS_Store
 *.swp
