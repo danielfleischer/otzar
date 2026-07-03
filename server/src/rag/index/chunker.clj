@@ -1,44 +1,41 @@
 (ns rag.index.chunker
-  "Naive whitespace chunker for M1: split text into whitespace-delimited tokens
-  and pack them into fixed-size windows with a small overlap. This is deliberately
-  crude — the OpenNLP sentence-aware packer replaces it in M2. The output shape is
-  the contract that survives that swap: a vector of {:chunk_idx :text} maps, so
-  everything downstream (rag.index → rag.index.lucene) is unaffected by the change.
+  "Sentence packer: group an ordered seq of sentences (from rag.index.segmenter)
+  into overlapping chunks for indexing — the `sentences → chunks` step of the
+  pipeline (plan §3.6).
 
-  Note: because splitting is on runs of whitespace, original spacing/newlines are
-  collapsed to single spaces in the chunk text. That's fine for BM25 keyword search
-  in M1; M2's segmenter preserves more structure."
+  Strategy (size-free): slide over the sentences in windows of `core` sentences,
+  and pad each window with `context` sentence(s) on each side so neighbouring
+  chunks overlap. No token counting.
+
+  The output shape is the contract everything downstream depends on
+  (rag.index → rag.index.lucene): a vector of {:chunk_idx :text} maps."
   (:require [clojure.string :as str]))
 
 (def default-opts
-  "~200 tokens per chunk with ~40 of overlap. Roomier than the ~300/50 target in
-  the plan since a whitespace token is smaller than a real subword token; revisit
-  once a proper tokenizer lands."
-  {:chunk-size 200 :overlap 40})
+  "core:    how many fresh sentences each chunk advances by.
+   context: overlap sentences added on each side.
+   So a chunk holds up to (context + core + context) sentences."
+  {:core 3 :context 1})
 
-(defn- windows
-  "Vector of subvectors of `tokens`, each up to `size` long, advancing by
-  (size - overlap) each step so adjacent windows share `overlap` tokens."
-  [tokens size overlap]
-  (let [step (max 1 (- size overlap))
-        n    (count tokens)]
-    (loop [start 0, acc []]
-      (if (>= start n)
-        acc
-        (let [end (min n (+ start size))
-              w   (subvec tokens start end)]
-          (if (>= end n)
-            (conj acc w)
-            (recur (+ start step) (conj acc w))))))))
+(defn pack
+  "Group `sentences` into overlapping chunks. Returns a vector of
+  {:chunk_idx i :text s} maps in order, where :chunk_idx is the 0-based position
+  and :text is the chunk's sentences joined by a single space.
 
-(defn chunk-text
-  "Split `text` into chunks. Returns a vector of {:chunk_idx i :text s} maps in
-  order; blank/empty input yields an empty vector."
-  ([text] (chunk-text text default-opts))
-  ([text {:keys [chunk-size overlap]}]
-   (let [tokens (into [] (remove str/blank?) (str/split (or text "") #"\s+"))]
-     (if (empty? tokens)
-       []
-       (into []
-             (map-indexed (fn [i w] {:chunk_idx i :text (str/join " " w)}))
-             (windows tokens chunk-size overlap))))))
+  Each chunk covers `core` consecutive sentences plus `context` sentence(s) of
+  overlap on each side, clamped at the document's start/end. Blank sentences are
+  dropped; nil/empty input → []. A document of ≤ core sentences is a single chunk.
+
+  Downstream (rag.index/file->chunks) calls `(pack (segmenter/segment text))`."
+  ([sentences] (pack sentences default-opts))
+  ([sentences {:keys [core context]}]
+   (let [sentences (vec (remove str/blank? sentences))
+         n         (count sentences)]
+     (vec
+      (map-indexed
+       (fn [idx start]
+         (let [from (max 0 (- start context))
+               to   (min n (+ start core context))]
+           {:chunk_idx idx
+            :text      (str/join " " (subvec sentences from to))}))
+       (range 0 n core))))))

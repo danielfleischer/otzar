@@ -8,6 +8,7 @@
             [rag.index.lucene :as lucene]
             [rag.index.walker :as walker]
             [rag.index.extractor :as extractor]
+            [rag.index.segmenter :as segmenter]
             [rag.index.chunker :as chunker])
   (:import [java.security MessageDigest]))
 
@@ -38,7 +39,7 @@
           doc-id (sha1 path)
           mtime  (.lastModified f)
           ext    (walker/ext f)]
-      (for [{:keys [chunk_idx text]} (chunker/chunk-text text)]
+      (for [{:keys [chunk_idx text]} (chunker/pack (segmenter/segment text))]
         {:id        (str doc-id ":" chunk_idx)
          :doc_id    doc-id
          :path      path
