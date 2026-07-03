@@ -23,7 +23,8 @@
      :ext       \"md\"                     ; may be nil
      :mtime     1712345678000             ; epoch millis (long)
      :chunk_idx 7                         ; int, position within the source doc
-     :text      \"...chunk text...\"}
+     :text      \"...chunk text...\"
+     :content_sha1 \"e3b0c4...\"}          ; sha1 of the source text (reindex gate)
 
   Field mapping (docs/rag-project-plan.md §4.1 — the M1 subset):
     id        StringField        stored, indexed (not analyzed)
@@ -33,6 +34,7 @@
     mtime     LongPoint (range) + StoredField (retrieval) + NumericDocValues (sort)
     chunk_idx IntPoint (range)  + StoredField (retrieval)
     text      TextField          stored, indexed  ← the only analyzed field; BM25 here
+    content_sha1 StoredField      stored only (retrieved by doc_id for reindex checks)
 
   ─────────────────────────────────────────────────────────────────────────────
   Hit map (output of keyword-search) — best first
@@ -52,7 +54,7 @@
            [org.apache.lucene.document Document Field$Store StringField TextField
             LongPoint IntPoint StoredField NumericDocValuesField KnnFloatVectorField]
            [org.apache.lucene.analysis.standard StandardAnalyzer]
-           [org.apache.lucene.search SearcherManager SearcherFactory KnnFloatVectorQuery]
+           [org.apache.lucene.search SearcherManager SearcherFactory KnnFloatVectorQuery TermQuery]
            [org.apache.lucene.queryparser.classic QueryParser]))
 
 (defn open
@@ -65,7 +67,7 @@
         manager   (SearcherManager. writer (SearcherFactory.))]
     {:dir directory :analyzer analyzer :writer writer :manager manager}))
 
-(defn- chunk->doc ^Document [{:keys [id doc_id path ext mtime chunk_idx text embedding]}]
+(defn- chunk->doc ^Document [{:keys [id doc_id path ext mtime chunk_idx text embedding content_sha1]}]
   (let [doc (Document.)]
     (.add doc (StringField. "id" id Field$Store/YES))
     (.add doc (StringField. "doc_id" doc_id Field$Store/YES))
@@ -78,6 +80,10 @@
     (.add doc (IntPoint. "chunk_idx" (int-array [chunk_idx])))
     (.add doc (StoredField. "chunk_idx" (int chunk_idx)))
     (.add doc (TextField. "text" text Field$Store/YES))
+    ;; content_sha1 lets a reindex detect an unchanged file and skip re-embedding
+    ;; (rag.index/file->chunks). Stored only — looked up by the indexed doc_id.
+    (when content_sha1
+      (.add doc (StoredField. "content_sha1" ^String content_sha1)))
     ;; embedding is optional: keyword-only indexing (pre-M3, or if the embedder is
     ;; unavailable) simply omits it. The field's dimension is inferred from the
     ;; float-array length and must be consistent across all docs in the field.
@@ -146,6 +152,24 @@
   hit shape as keyword-search, with :score the cosine vector similarity."
   [{:keys [^SearcherManager manager]} ^floats qvec k]
   (run-search manager (KnnFloatVectorQuery. "embedding" qvec (int k)) k))
+
+(defn doc-meta
+  "Return {:mtime <long> :content_sha1 <string>} pulled from any one live chunk of
+  `doc-id`, or nil if the doc isn't indexed. Thread-safe (acquires its own
+  searcher), so reindex change-detection can run it from worker threads while the
+  writer is mid-batch — it sees the last committed state, which is exactly what
+  the check wants to compare against."
+  [{:keys [^SearcherManager manager]} doc-id]
+  (let [searcher (.acquire manager)]
+    (try
+      (let [top (.search searcher (TermQuery. (Term. "doc_id" ^String doc-id)) (int 1))
+            sds (.scoreDocs top)]
+        (when (pos? (alength sds))
+          (let [doc (.document (.storedFields searcher) (.doc (aget sds 0)))]
+            {:mtime        (field-long doc "mtime")
+             :content_sha1 (.get doc "content_sha1")})))
+      (finally
+        (.release manager searcher)))))
 
 (defn- distinct-terms
   "Count distinct indexed values of `field` across the reader."
