@@ -5,6 +5,7 @@
   search/stats/close. Every Lucene specific lives behind rag.index.lucene; this
   namespace only knows the chunk/hit contract."
   (:require [rag.config :as config]
+            [rag.embed :as embed]
             [rag.index.lucene :as lucene]
             [rag.index.walker :as walker]
             [rag.index.extractor :as extractor]
@@ -32,21 +33,26 @@
 
 (defn- file->chunks
   "Turn one file into a seq of chunk maps (the shape rag.index.lucene expects),
-  or nil if the extractor skipped it."
+  or nil if the extractor skipped it. All of the file's chunks are embedded in a
+  single batched call to the embedder, and the vector is attached as :embedding."
   [^java.io.File f]
   (when-let [text (extractor/extract f)]
     (let [path   (.getAbsolutePath f)
           doc-id (sha1 path)
           mtime  (.lastModified f)
-          ext    (walker/ext f)]
-      (for [{:keys [chunk_idx text]} (chunker/pack (segmenter/segment text))]
-        {:id        (str doc-id ":" chunk_idx)
-         :doc_id    doc-id
-         :path      path
-         :ext       ext
-         :mtime     mtime
-         :chunk_idx chunk_idx
-         :text      text}))))
+          ext    (walker/ext f)
+          chunks (chunker/pack (segmenter/segment text))
+          vecs   (embed/embed-batch (map :text chunks))]
+      (mapv (fn [{:keys [chunk_idx text]} embedding]
+              {:id        (str doc-id ":" chunk_idx)
+               :doc_id    doc-id
+               :path      path
+               :ext       ext
+               :mtime     mtime
+               :chunk_idx chunk_idx
+               :text      text
+               :embedding embedding})
+            chunks vecs))))
 
 (defn index-paths!
   "Walk `paths`, extract + chunk each file, and add all chunks to the index.
@@ -71,13 +77,15 @@
             {:indexed indexed :chunks chunks :skipped skipped :errors errors})))))
 
 (defn search
-  "Keyword (BM25) search for M1. Any `mode` other than \"keyword\" is rejected
-  until vector/hybrid land (M3/M4). Returns {:hits [...]}."
+  "Search the index. mode \"keyword\" → BM25 over the text field; mode \"vector\"
+  → embed the query and run kNN over the embedding field. \"hybrid\" (RRF over
+  both) lands in M4. Returns {:hits [...]}."
   [{:keys [q k mode] :or {k 10 mode "keyword"}}]
-  (when-not (= mode "keyword")
-    (throw (ex-info (str "mode \"" mode "\" not supported yet (M1 is keyword-only)")
-                    {:type :unsupported-mode :mode mode})))
-  {:hits (lucene/keyword-search (ensure!) q k)})
+  {:hits (case mode
+           "keyword" (lucene/keyword-search (ensure!) q k)
+           "vector"  (lucene/vector-search (ensure!) (embed/embed-one q) k)
+           (throw (ex-info (str "mode \"" mode "\" not supported yet (have: keyword, vector)")
+                           {:type :unsupported-mode :mode mode})))})
 
 (defn stats
   "Index counts, or zeros if nothing has opened the index yet."

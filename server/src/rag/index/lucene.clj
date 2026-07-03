@@ -47,11 +47,12 @@
     `?`, `*`, etc.) match literally instead of being read as wildcard syntax.
   - Deletion/reindex by doc_id is M5 — this assumes a fresh or additive index."
   (:import [org.apache.lucene.store FSDirectory]
-           [org.apache.lucene.index IndexWriter IndexWriterConfig MultiTerms Term]
+           [org.apache.lucene.index IndexWriter IndexWriterConfig MultiTerms Term
+            VectorSimilarityFunction]
            [org.apache.lucene.document Document Field$Store StringField TextField
-            LongPoint IntPoint StoredField NumericDocValuesField]
+            LongPoint IntPoint StoredField NumericDocValuesField KnnFloatVectorField]
            [org.apache.lucene.analysis.standard StandardAnalyzer]
-           [org.apache.lucene.search SearcherManager SearcherFactory]
+           [org.apache.lucene.search SearcherManager SearcherFactory KnnFloatVectorQuery]
            [org.apache.lucene.queryparser.classic QueryParser]))
 
 (defn open
@@ -64,7 +65,7 @@
         manager   (SearcherManager. writer (SearcherFactory.))]
     {:dir directory :analyzer analyzer :writer writer :manager manager}))
 
-(defn- chunk->doc ^Document [{:keys [id doc_id path ext mtime chunk_idx text]}]
+(defn- chunk->doc ^Document [{:keys [id doc_id path ext mtime chunk_idx text embedding]}]
   (let [doc (Document.)]
     (.add doc (StringField. "id" id Field$Store/YES))
     (.add doc (StringField. "doc_id" doc_id Field$Store/YES))
@@ -77,6 +78,11 @@
     (.add doc (IntPoint. "chunk_idx" (int-array [chunk_idx])))
     (.add doc (StoredField. "chunk_idx" (int chunk_idx)))
     (.add doc (TextField. "text" text Field$Store/YES))
+    ;; embedding is optional: keyword-only indexing (pre-M3, or if the embedder is
+    ;; unavailable) simply omits it. The field's dimension is inferred from the
+    ;; float-array length and must be consistent across all docs in the field.
+    (when embedding
+      (.add doc (KnnFloatVectorField. "embedding" ^floats embedding VectorSimilarityFunction/COSINE)))
     doc))
 
 (defn add-chunks!
@@ -102,28 +108,44 @@
 (defn- ^long field-int [^Document doc ^String name]
   (.intValue (.numericValue (.getField doc name))))
 
+(defn- ->hit
+  "Build a hit map from one ScoreDoc, pulling stored fields via `stored`."
+  [stored ^org.apache.lucene.search.ScoreDoc sd]
+  (let [doc (.document stored (.doc sd))]
+    {:id        (.get doc "id")
+     :doc_id    (.get doc "doc_id")
+     :path      (.get doc "path")
+     :score     (.score sd)
+     :text      (.get doc "text")
+     :chunk_idx (field-int doc "chunk_idx")
+     :mtime     (field-long doc "mtime")}))
+
+(defn- run-search
+  "Acquire a searcher, run `query` for the top `k`, map results to hit maps, and
+  always release the searcher. Shared by keyword- and vector-search."
+  [^SearcherManager manager query k]
+  (let [searcher (.acquire manager)]
+    (try
+      (let [top    (.search searcher query (int k))
+            stored (.storedFields searcher)]
+        (mapv #(->hit stored %) (.scoreDocs top)))
+      (finally
+        (.release manager searcher)))))
+
 (defn keyword-search
   "BM25 search over the `text` field for query string `q`; return up to `k` hit
   maps, best first. Filters are M4 — ignored for now."
   [{:keys [^StandardAnalyzer analyzer ^SearcherManager manager]} q k]
-  (let [parser   (QueryParser. "text" analyzer)
-        query    (.parse parser (QueryParser/escape q))
-        searcher (.acquire manager)]
-    (try
-      (let [top    (.search searcher query (int k))
-            stored (.storedFields searcher)]
-        (mapv (fn [sd]
-                (let [doc (.document stored (.doc sd))]
-                  {:id        (.get doc "id")
-                   :doc_id    (.get doc "doc_id")
-                   :path      (.get doc "path")
-                   :score     (.score sd)
-                   :text      (.get doc "text")
-                   :chunk_idx (field-int doc "chunk_idx")
-                   :mtime     (field-long doc "mtime")}))
-              (.scoreDocs top)))
-      (finally
-        (.release manager searcher)))))
+  (let [parser (QueryParser. "text" analyzer)
+        query  (.parse parser (QueryParser/escape q))]
+    (run-search manager query k)))
+
+(defn vector-search
+  "Approximate-nearest-neighbour (HNSW) search over the `embedding` field for the
+  query vector `qvec` (a float-array); return up to `k` hit maps, best first. Same
+  hit shape as keyword-search, with :score the cosine vector similarity."
+  [{:keys [^SearcherManager manager]} ^floats qvec k]
+  (run-search manager (KnnFloatVectorQuery. "embedding" qvec (int k)) k))
 
 (defn- distinct-terms
   "Count distinct indexed values of `field` across the reader."

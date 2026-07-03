@@ -23,3 +23,12 @@
   []
   (.mkdirs myrag-dir)
   (Files/setPosixFilePermissions (.toPath myrag-dir) owner-only))
+
+;; ── Embeddings (plan §3.4) ──────────────────────────────────────────────────
+(def ollama-url
+  "Base URL of the Ollama sidecar that serves embeddings. Override with OLLAMA_URL."
+  (or (System/getenv "OLLAMA_URL") "http://localhost:11434"))
+
+(def embed-model
+  "Ollama embedding model. Override with MYRAG_EMBED_MODEL."
+  (or (System/getenv "MYRAG_EMBED_MODEL") "embeddinggemma"))

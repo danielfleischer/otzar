@@ -103,10 +103,13 @@ runtime or PyInstaller bundle).
 ### 3.4 Embeddings — Ollama (sidecar) for v1
 
 - Avoids JVM ML plumbing (DJL/ONNX, tokenizer setup, Metal/CUDA wiring) for v1.
-- `POST /api/embeddings` is dead simple.
-- The embedder boundary in the server is a single interface — swapping to in-process
-  DJL or ONNX later is a one-day refactor, not an architectural redo.
-- Default model: `nomic-embed-text` (768-dim, decent quality, fast, runs on CPU).
+- `POST /api/embed` (`{model, input}` → `{embeddings: [[...]]}`) is dead simple,
+  and takes a batch of inputs in one call.
+- The embedder boundary in the server is a single namespace (`rag.embed`) —
+  swapping to in-process DJL or ONNX later is a one-day refactor, not an
+  architectural redo.
+- Default model: `embeddinggemma` (768-dim, runs on CPU). Override via the
+  `MYRAG_EMBED_MODEL` env var; the Ollama URL via `OLLAMA_URL`.
 
 Alternatives kept in mind:
 - **DJL** with `sentence-transformers/all-MiniLM-L6-v2` — in-process, no sidecar; pick
@@ -116,26 +119,32 @@ Alternatives kept in mind:
 - **text-embeddings-inference** (HF) — faster batching/GPU than Ollama; consider if
   bulk indexing throughput matters.
 
-### 3.5 Sentence segmentation — Apache OpenNLP
+### 3.5 Sentence segmentation — JVM BreakIterator (UAX #29)
 
-- Pretrained `en-sent.bin` model, ~100KB, ships with `opennlp-tools`.
-- Battle-tested, accurate enough for prose and technical docs.
-- Zero-config Java interop from Clojure.
+- `java.text.BreakIterator/getSentenceInstance` — built into the JDK, zero deps,
+  no model file to ship or download.
+- Language-independent Unicode sentence rules: handles Hebrew, English, and
+  mixed-script text without a per-language model. **Hebrew support is the deciding
+  factor** — OpenNLP ships no Hebrew model.
+- Trade-off: rule-based breaking over-splits English period-abbreviations ("Dr.",
+  initials). Harmless here — the chunker re-joins consecutive sentences, so the
+  chunk *text* is unaffected; only chunk boundaries shift slightly.
 
-Rejected: ICU `BreakIterator` (rule-based, stumbles on abbreviations); CoreNLP
-(heavyweight, licensing); Lucene `OpenNLPSentenceBreakIterator` (couples segmentation
-to the Lucene analyzer chain — we want it as a pre-step so the chunker sees sentences
-before they hit the index).
+Rejected: OpenNLP (no Hebrew model, needs a downloaded model file); ICU4J
+`BreakIterator` (identical behavior, +13 MB dependency); a Python sidecar
+(spaCy/Stanza) — best quality and Hebrew, but adds a process to manage. Revisit
+the sidecar only if standalone-sentence quality (not chunking) ever matters.
 
 ### 3.6 Chunking strategy
 
-- Pipeline: `document → sentences (OpenNLP) → chunks (packer) → embeddings`.
-- Pack sentences into chunks of **~300 tokens** with **~50 tokens overlap** (1–2
-  sentences). Token count approximated via a simple whitespace+punctuation heuristic
-  for v1; can move to a real tokenizer later if recall suffers.
-- Each chunk carries metadata: source path, byte offsets, sentence range, mtime,
-  extension. Chunk is the unit of retrieval; document is reconstructed from chunk
-  metadata.
+- Pipeline: `document → sentences (BreakIterator) → chunks (windowed packer) →
+  embeddings`.
+- Size-free windowing: slide over the sentences in windows of **3** sentences and
+  pad each window with **1** sentence of overlap on each side, so neighbours share
+  context. No token counting — simpler than a token budget and good enough for v1;
+  revisit if recall suffers.
+- Each chunk carries metadata: source path, mtime, chunk index, extension. Chunk is
+  the unit of retrieval; the document is reconstructed from chunk metadata.
 
 ## 4. Data model
 
@@ -327,20 +336,23 @@ git tag covers both.
 
 ## 9. Key dependencies (server)
 
+Pinned in `server/deps.edn`:
+
 ```clojure
 {:deps
- {org.clojure/clojure              {:mvn/version "1.12.0"}
-  org.apache.lucene/lucene-core    {:mvn/version "9.11.1"}
-  org.apache.lucene/lucene-analysis-common {:mvn/version "9.11.1"}
-  org.apache.lucene/lucene-queryparser     {:mvn/version "9.11.1"}
-  org.apache.opennlp/opennlp-tools {:mvn/version "2.3.3"}
-  ring/ring-jetty-adapter          {:mvn/version "1.12.1"}
-  metosin/reitit-ring              {:mvn/version "0.7.0"}
-  metosin/jsonista                 {:mvn/version "0.3.8"}
-  hato/hato                        {:mvn/version "1.0.0"}}}  ; HTTP client → Ollama
+ {org.clojure/clojure                      {:mvn/version "1.12.5"}
+  org.apache.lucene/lucene-core            {:mvn/version "10.5.0"}
+  org.apache.lucene/lucene-analysis-common {:mvn/version "10.5.0"}
+  org.apache.lucene/lucene-queryparser     {:mvn/version "10.5.0"}
+  ring/ring-jetty-adapter                  {:mvn/version "1.15.5"}
+  metosin/reitit-ring                      {:mvn/version "0.10.1"}
+  metosin/jsonista                         {:mvn/version "1.0.0"}}}
 ```
 
-(Versions are illustrative; pin to whatever's current at start.)
+Notable non-deps: **no OpenNLP** — segmentation is the JDK's `BreakIterator`
+(§3.5). **No HTTP-client library** — the Ollama embed calls use the JDK's
+built-in `java.net.http`. Lucene 10.5 provides both BM25 keyword search and the
+HNSW `KnnFloatVectorField` used for vectors.
 
 ## 10. Milestones
 
@@ -350,8 +362,9 @@ A rough sequence — each milestone is independently runnable and demoable.
 2. **M1 — keyword-only indexing**: walk a folder, extract text, naive whitespace
    chunking, index into Lucene `text` field, `/query` with `mode=keyword` works
    end-to-end. No embeddings yet.
-3. **M2 — sentences & chunking**: replace naive chunker with OpenNLP segmenter +
-   sentence packer. Reindex; verify chunk boundaries look sane on real docs.
+3. **M2 — sentences & chunking**: replace naive chunker with a BreakIterator
+   segmenter + a windowed sentence packer (3-sentence windows, 1 sentence of
+   overlap each side). Reindex; verify chunk boundaries look sane on real docs.
 4. **M3 — embeddings & vector search**: Ollama integration behind `Embedder`
    protocol; backfill embeddings on next index; `/query` with `mode=vector` works.
 5. **M4 — hybrid + filters**: filtered kNN, filtered BM25, RRF fusion;
