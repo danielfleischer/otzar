@@ -32,7 +32,7 @@
   [inputs]
   (let [body (j/write-value-as-string {:model config/embed-model :input inputs})
         req  (-> (HttpRequest/newBuilder (URI/create (str config/ollama-url "/api/embed")))
-                 (.timeout (Duration/ofSeconds 60))
+                 (.timeout (Duration/ofSeconds config/embed-timeout-s))
                  (.header "Content-Type" "application/json")
                  (.POST (HttpRequest$BodyPublishers/ofString body))
                  (.build))

@@ -31,3 +31,9 @@
 (def embed-model
   "Ollama embedding model. Override with MYRAG_EMBED_MODEL."
   (or (System/getenv "MYRAG_EMBED_MODEL") "embeddinggemma"))
+
+(def embed-timeout-s
+  "Per-request timeout (seconds) for an Ollama embed call. Generous by default:
+  on CPU the model can be slow to load and a batch of chunks can take a while.
+  Override with MYRAG_EMBED_TIMEOUT."
+  (or (some-> (System/getenv "MYRAG_EMBED_TIMEOUT") Long/parseLong) 300))
