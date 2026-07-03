@@ -4,4 +4,5 @@
 
 1. [ ] client lifecycle of ollama.
 2. [ ] indexing status: files, progress bar.
-3. [ ] ollama request timed out during long indexing sessions.
+3. [X] ollama request timed out during long indexing sessions. Increased from 60 to 300, going to be solved later with
+   parallel calls.

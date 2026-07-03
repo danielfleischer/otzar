@@ -37,3 +37,10 @@
   on CPU the model can be slow to load and a batch of chunks can take a while.
   Override with MYRAG_EMBED_TIMEOUT."
   (or (some-> (System/getenv "MYRAG_EMBED_TIMEOUT") Long/parseLong) 300))
+
+(def index-concurrency
+  "How many files to extract+embed concurrently during /index. Embedding is
+  Ollama-bound and parallelizes well (measured ~linear scaling to 8 in-flight
+  requests), while the Lucene writer stays single-threaded. Override with
+  MYRAG_INDEX_CONCURRENCY."
+  (int (or (some-> (System/getenv "MYRAG_INDEX_CONCURRENCY") Long/parseLong) 8)))
