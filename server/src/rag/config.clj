@@ -45,6 +45,12 @@
   with MYRAG_EMBED_BATCH."
   (int (or (some-> (System/getenv "MYRAG_EMBED_BATCH") Long/parseLong) 64)))
 
+(def nrepl-port
+  "TCP port for the in-server nREPL (loopback only) that CIDER attaches to; 0
+  picks a free port, published to .nrepl-port for auto-discovery. Override with
+  MYRAG_NREPL_PORT."
+  (int (or (some-> (System/getenv "MYRAG_NREPL_PORT") Long/parseLong) 0)))
+
 (def index-concurrency
   "How many files to extract+embed concurrently during /index. Embedding is
   Ollama-bound and parallelizes well (measured ~linear scaling to 8 in-flight

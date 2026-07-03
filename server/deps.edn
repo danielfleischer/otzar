@@ -8,7 +8,9 @@
   org.apache.lucene/lucene-analysis-common {:mvn/version "10.5.0"}
   org.apache.lucene/lucene-queryparser     {:mvn/version "10.5.0"}}
  :aliases
- {:run  {:main-opts ["-m" "rag.main"]}
+ {:run  {:extra-deps {nrepl/nrepl          {:mvn/version "1.7.0"}
+                      cider/cider-nrepl    {:mvn/version "0.61.0"}}
+         :main-opts ["-m" "rag.main"]}
   :test {:extra-paths ["test"]
          :extra-deps  {io.github.cognitect-labs/test-runner
                        {:git/sha "3f288f1f16d167723ad87cc35b1dfee3c1681e10"}}
