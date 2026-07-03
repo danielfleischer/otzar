@@ -2,9 +2,12 @@
   "Ring/reitit handlers. M1 surface: /health, /stats, /index, /query, /shutdown.
   Later milestones add /reindex, DELETE /index, /document/:id."
   (:require [reitit.ring :as ring]
+            [ring.core.protocols :as rcp]
             [jsonista.core :as j]
             [clojure.string :as str]
-            [rag.index :as index]))
+            [rag.index :as index])
+  (:import [java.io OutputStream IOException]
+           [java.util.concurrent Executors TimeUnit]))
 
 (def ^:private start-ms (System/currentTimeMillis))
 
@@ -41,11 +44,48 @@
 (defn- stats [_]
   (json 200 (index/stats)))
 
-(defn- index-handler [req]
+(def ^:private heartbeat-secs
+  "How often, in seconds, to poke the response socket while indexing so we notice
+  a disconnected client within roughly this bound (independent of file size)."
+  2)
+
+(defn- index-handler
+  "Index the requested paths, streaming the response so a disconnected client
+  cancels the work. A background timer writes a heartbeat space every
+  `heartbeat-secs` and flushes; when the client is gone the flush throws and we
+  flip a `gone` flag that index-paths! polls — per file, and inside the embedder
+  between batches — so indexing (and the Ollama work in flight) stops within
+  ~one heartbeat + one embed batch. The heartbeats are JSON-insignificant
+  whitespace before the final result object, so clients need no special handling."
+  [req]
   (let [{:keys [paths recursive] :or {recursive true}} (read-body req)]
     (if (empty? paths)
       (json 400 {:error "index requires a non-empty \"paths\" array"})
-      (json 200 (index/index-paths! paths {:recursive recursive})))))
+      {:status  200
+       :headers {"Content-Type" "application/json"}
+       :body
+       (reify rcp/StreamableResponseBody
+         (write-body-to-stream [_ _ out]
+           (let [^OutputStream out out
+                 gone  (atom false)     ; set by a failed heartbeat = client left
+                 lock  (Object.)        ; serialize the two writer threads onto `out`
+                 beat  (fn []
+                         (locking lock
+                           (try (.write out (int \space)) (.flush out)
+                                (catch IOException _ (reset! gone true)))))
+                 sched (Executors/newSingleThreadScheduledExecutor)]
+             (.scheduleAtFixedRate sched ^Runnable beat
+                                   heartbeat-secs heartbeat-secs TimeUnit/SECONDS)
+             (let [result (try (index/index-paths! paths {:recursive recursive}
+                                                   (fn [] @gone))
+                               (catch Throwable t {:error (.getMessage t)}))]
+               (.shutdownNow sched)     ; no more heartbeats before the final write
+               (locking lock
+                 (try
+                   (.write out (.getBytes (j/write-value-as-string result) "UTF-8"))
+                   (.flush out)
+                   (catch IOException _ nil)))   ; client already gone; nothing to send
+               (.close out)))))})))
 
 (defn- query-handler [req]
   (let [{:keys [q k mode] :or {k 10 mode "keyword"}} (read-body req)]

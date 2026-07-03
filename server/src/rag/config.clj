@@ -38,6 +38,13 @@
   Override with MYRAG_EMBED_TIMEOUT."
   (or (some-> (System/getenv "MYRAG_EMBED_TIMEOUT") Long/parseLong) 300))
 
+(def embed-batch
+  "Max inputs per Ollama /api/embed request. Caps the unit of work a single
+  request commits Ollama to, so a huge file can't turn into one hours-long,
+  un-cancellable request; 32–64 is the measured throughput sweet spot. Override
+  with MYRAG_EMBED_BATCH."
+  (int (or (some-> (System/getenv "MYRAG_EMBED_BATCH") Long/parseLong) 64)))
+
 (def index-concurrency
   "How many files to extract+embed concurrently during /index. Embedding is
   Ollama-bound and parallelizes well (measured ~linear scaling to 8 in-flight

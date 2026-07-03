@@ -41,8 +41,10 @@
   we stored, it's untouched and we skip *without even reading it*; otherwise we
   read + hash and still skip if the content sha1 matches (an mtime bump with no
   real edit). Only genuinely new/changed files reach the embedder, whose vectors
-  are attached as :embedding; every chunk also carries :content_sha1 for next time."
-  [component ^java.io.File f]
+  are attached as :embedding; every chunk also carries :content_sha1 for next time.
+  `cancelled?` is threaded into the embedder so a large file's embedding is
+  abandoned promptly (between batches) when the client disconnects."
+  [component ^java.io.File f cancelled?]
   (let [path   (.getAbsolutePath f)
         doc-id (sha1 path)
         mtime  (.lastModified f)
@@ -55,7 +57,7 @@
             ::unchanged
             (let [ext    (walker/ext f)
                   chunks (chunker/pack (segmenter/segment text))
-                  vecs   (embed/embed-documents (.getName f) (map :text chunks))]
+                  vecs   (embed/embed-documents (.getName f) (map :text chunks) cancelled?)]
               (mapv (fn [{:keys [chunk_idx text]} embedding]
                       {:id           (str doc-id ":" chunk_idx)
                        :doc_id       doc-id
@@ -74,10 +76,10 @@
   the source file so the writer thread can attribute it:
     {:file f :unchanged true}   already indexed, identical content (nothing embedded)
     {:file f :chunks <seq>}     ok; empty/nil chunks means the extractor skipped it
-    {:file f :error <msg>}      extract or embed threw"
-  [component ^java.io.File f]
+    {:file f :error <msg>}      extract or embed threw (incl. a cancelled embed)"
+  [component ^java.io.File f cancelled?]
   (try
-    (let [r (file->chunks component f)]
+    (let [r (file->chunks component f cancelled?)]
       (if (= ::unchanged r)
         {:file f :unchanged true}
         {:file f :chunks r}))
@@ -92,39 +94,55 @@
   At most `index-concurrency` files are in flight, so memory stays bounded.
   Files whose content is unchanged since the last index are skipped without
   re-embedding (see file->chunks), counted under :unchanged.
+
+  The 3-arg form takes a no-arg `cancelled?` predicate, polled both here (per
+  file) and inside the embedder (between batches, via file->chunks). Once it turns
+  true the index is *cancelled*: no more files are submitted, in-flight embeds are
+  interrupted, the work done so far is committed, and the result comes back with
+  :cancelled true. rag.http drives it from a heartbeat write so a disconnected
+  client stops the indexing — and, because it reaches into the embed batches, the
+  Ollama work in flight is bounded to the current batch rather than a whole file.
   Returns {:indexed <files> :chunks <n> :skipped :unchanged :errors [{:path ..}]}."
-  [paths {:keys [recursive] :or {recursive true}}]
-  (let [idx    (ensure!)
-        files  (distinct (mapcat #(walker/walk % {:recursive recursive}) paths))
-        pool   (Executors/newFixedThreadPool config/index-concurrency)
-        submit (fn [^java.io.File f]
-                 (.submit pool ^Callable (fn [] (embed-file-result idx f))))]
-    (try
-      (loop [in-flight (into clojure.lang.PersistentQueue/EMPTY
-                            (map submit (take config/index-concurrency files)))
-             pending   (drop config/index-concurrency files)
-             indexed 0, chunks 0, skipped 0, unchanged 0, errors []]
-        (if-let [fut (peek in-flight)]
-          (let [{:keys [^java.io.File file error] unchg :unchanged cs :chunks} (.get ^Future fut)
-                ;; keep the window full: as each result lands, submit the next file
-                in-flight (cond-> (pop in-flight)
-                            (seq pending) (conj (submit (first pending))))
-                pending   (if (seq pending) (rest pending) pending)]
-            (cond
-              error
-              (recur in-flight pending indexed chunks skipped unchanged
-                     (conj errors {:path (.getAbsolutePath file) :error error}))
-              unchg
-              (recur in-flight pending indexed chunks skipped (inc unchanged) errors)
-              (seq cs)
-              (do (lucene/add-chunks! idx cs)
-                  (recur in-flight pending (inc indexed) (+ chunks (count cs)) skipped unchanged errors))
-              :else
-              (recur in-flight pending indexed chunks (inc skipped) unchanged errors)))
-          (do (lucene/commit! idx)
-              {:indexed indexed :chunks chunks :skipped skipped
-               :unchanged unchanged :errors errors})))
-      (finally (.shutdown pool)))))
+  ([paths opts] (index-paths! paths opts (constantly false)))
+  ([paths {:keys [recursive] :or {recursive true}} cancelled?]
+   (let [idx    (ensure!)
+         files  (distinct (mapcat #(walker/walk % {:recursive recursive}) paths))
+         pool   (Executors/newFixedThreadPool config/index-concurrency)
+         submit (fn [^java.io.File f]
+                  (.submit pool ^Callable (fn [] (embed-file-result idx f cancelled?))))
+         finish (fn [indexed chunks skipped unchanged errors cancelled]
+                  (lucene/commit! idx)
+                  (cond-> {:indexed indexed :chunks chunks :skipped skipped
+                           :unchanged unchanged :errors errors}
+                    cancelled (assoc :cancelled true)))]
+     (try
+       (loop [in-flight (into clojure.lang.PersistentQueue/EMPTY
+                             (map submit (take config/index-concurrency files)))
+              pending   (drop config/index-concurrency files)
+              indexed 0, chunks 0, skipped 0, unchanged 0, errors []]
+         (if-let [fut (peek in-flight)]
+           (let [result (.get ^Future fut)]  ; wait for the oldest file (worker self-cancels if flagged)
+             (if (cancelled?)
+               ;; client gone: drop this result, stop submitting, interrupt the
+               ;; rest, keep what's already committed.
+               (do (.shutdownNow pool)
+                   (finish indexed chunks skipped unchanged errors true))
+               (let [{:keys [^java.io.File file error] unchg :unchanged cs :chunks} result
+                     ;; keep the window full: as each result lands, submit the next
+                     in-flight (cond-> (pop in-flight)
+                                 (seq pending) (conj (submit (first pending))))
+                     pending   (if (seq pending) (rest pending) pending)
+                     [indexed chunks skipped unchanged errors]
+                     (cond
+                       error    [indexed chunks skipped unchanged
+                                 (conj errors {:path (.getAbsolutePath file) :error error})]
+                       unchg    [indexed chunks skipped (inc unchanged) errors]
+                       (seq cs) (do (lucene/add-chunks! idx cs)
+                                    [(inc indexed) (+ chunks (count cs)) skipped unchanged errors])
+                       :else    [indexed chunks (inc skipped) unchanged errors])]
+                 (recur in-flight pending indexed chunks skipped unchanged errors))))
+           (finish indexed chunks skipped unchanged errors false)))
+       (finally (.shutdown pool))))))
 
 (defn search
   "Search the index. mode \"keyword\" → BM25 over the text field; mode \"vector\"

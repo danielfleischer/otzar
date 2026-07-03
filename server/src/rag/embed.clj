@@ -67,23 +67,36 @@
   (str "title: " title " | text: " text))
 
 (defn- embed-prepared
-  "Embed a seq of already-prompt-prefixed strings in one request; return a vector
-  of float-arrays, one per input, in order. Empty input → [] (no request made)."
-  [prepared]
-  (let [prepared (vec prepared)]
-    (if (empty? prepared)
-      []
-      (mapv ->floats (:embeddings (post-embed prepared))))))
+  "Embed a seq of already-prompt-prefixed strings, split into requests of at most
+  config/embed-batch inputs so no single Ollama call represents an unbounded
+  amount of work. `cancelled?` is polled before each batch; once it turns true the
+  embedding aborts (throwing ::cancelled) instead of dispatching the remaining
+  batches — this is how a disconnected client stops Ollama promptly, even partway
+  through a large file. Returns a vector of float-arrays, one per input, in order;
+  empty input → [] with no request made."
+  [prepared cancelled?]
+  (loop [batches (partition-all config/embed-batch prepared)
+         acc     (transient [])]
+    (if-let [batch (first batches)]
+      (do
+        (when (cancelled?)
+          (throw (ex-info "embedding cancelled" {:type ::cancelled})))
+        (recur (rest batches)
+               (reduce conj! acc (map ->floats (:embeddings (post-embed (vec batch)))))))
+      (persistent! acc))))
 
 (defn embed-documents
   "Embed chunk texts for *storage* (indexing side), applying the document prompt
   with `title` (the source file name) so the vectors carry a little document
-  context. Returns a vector of float-arrays, one per input, in order."
-  [title texts]
-  (embed-prepared (map #(document-prompt title %) texts)))
+  context. `cancelled?` (default never) is polled between batches so an in-progress
+  file can be abandoned when the client disconnects. Returns a vector of
+  float-arrays, one per input, in order."
+  ([title texts] (embed-documents title texts (constantly false)))
+  ([title texts cancelled?]
+   (embed-prepared (map #(document-prompt title %) texts) cancelled?)))
 
 (defn embed-query
   "Embed a single search string for *retrieval*, applying the query prompt.
   Returns one float-array."
   ^floats [text]
-  (first (embed-prepared [(str query-prompt text)])))
+  (first (embed-prepared [(str query-prompt text)] (constantly false))))
