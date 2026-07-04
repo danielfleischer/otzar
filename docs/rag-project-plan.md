@@ -486,3 +486,40 @@ That's the entire integration surface for the user.
 - Long-running operations (full corpus reindex). MCP tool calls should be
   bounded-latency; surface progress via the CLI instead.
 - Authentication / per-tool ACLs. Single-user, local — not needed.
+
+### 13.7 Source line numbers for citation (deferred — see todo.org #4)
+
+The MCP consumer is an LLM host (Claude Code/Desktop). What it does with a hit is
+*cite or open it* — and the format it natively understands is `path:line`. That
+usage dictates the design, both the shape and the caveats:
+
+- **A line range, not a point.** A chunk spans several sentences over several
+  lines, so a single "the line" under-specifies where the evidence is. Return
+  `{:line_start :line_end}` (1-based, editor/human convention) so the model can
+  cite `path:Lstart-Lend` and `get_document` can fetch a range.
+- **Surface it next to the path, and announce it in the tool description.** The
+  host shows the `search` description to the LLM; if hits carry line ranges, say so
+  (e.g. *"…returns ranked chunks with file path and line range"*) or the model
+  won't know it may cite them.
+- **Omit for formats without source lines — never fake it.** Line numbers are only
+  meaningful while extracted text == file bytes, which is exactly today's plain-text
+  extractor (§3.5). M8's Tika extractors (PDF/HTML) *reconstruct* text; offsets
+  won't map to source lines (PDFs have none). For those, omit the field entirely —
+  an LLM handles an absent field fine, but will confidently cite a wrong one.
+
+Feasibility: **easy-ish (an afternoon).** The data is already computed and thrown
+away — `segmenter/segment` holds each sentence's char offset (`start` in the
+BreakIterator loop) and discards it. Line number = count of `\n` in the source
+before that offset, +1 (precompute newline offsets once, binary-search per
+sentence). Capture points, in pipeline order:
+
+1. **segmenter** — return `{:text :line}` per sentence instead of a bare string.
+2. **chunker** — a chunk's range is `[first-sentence-line, last-sentence-line]`; the
+   packer already knows the window's `from`/`to` sentence indices. Add
+   `:line_start`/`:line_end` to the emitted map.
+3. **lucene** — store two `StoredField`s alongside `chunk_idx`; retrieve in `->hit`.
+   Additive/backward-compatible: old docs return nil, so only a reindex is needed.
+
+The one real cost isn't the algorithm — it's that `segment`'s return type changes
+from `[String]` to `[map]`, a shared-contract change that ripples into the chunker
+and into both `segmenter_test` and `chunker_test`.
