@@ -11,17 +11,20 @@ import (
 )
 
 var (
-	queryK    int
-	queryMode string
-	queryExt  []string
-	queryJSON bool
+	queryK     int
+	queryMode  string
+	queryExt   []string
+	queryPath  string
+	queryAfter string
+	queryJSON  bool
 )
 
 var queryCmd = &cobra.Command{
 	Use:   "query <text>...",
 	Short: "Search the index",
-	Long: `Search the index and print ranked chunks. In M1 only --mode keyword
-(BM25) is available; vector and hybrid modes arrive in later milestones.`,
+	Long: `Search the index and print ranked chunks. --mode selects the retriever:
+keyword (BM25), vector (kNN over embeddings), or hybrid (RRF fusion of both).
+--ext, --path, and --after apply metadata filters to any mode.`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		req := api.QueryRequest{
@@ -29,8 +32,18 @@ var queryCmd = &cobra.Command{
 			K:    queryK,
 			Mode: queryMode,
 		}
+		filters := map[string]any{}
 		if len(queryExt) > 0 {
-			req.Filters = map[string]any{"ext": queryExt}
+			filters["ext"] = queryExt
+		}
+		if queryPath != "" {
+			filters["path_prefix"] = queryPath
+		}
+		if queryAfter != "" {
+			filters["mtime_after"] = queryAfter
+		}
+		if len(filters) > 0 {
+			req.Filters = filters
 		}
 
 		c, err := api.New()
@@ -77,9 +90,13 @@ func snippet(text string) string {
 
 func init() {
 	queryCmd.Flags().IntVar(&queryK, "k", 10, "number of results")
-	queryCmd.Flags().StringVar(&queryMode, "mode", "keyword",
-		"retrieval mode: keyword (vector/hybrid land in later milestones)")
+	queryCmd.Flags().StringVar(&queryMode, "mode", "hybrid",
+		"retrieval mode: hybrid | keyword | vector")
 	queryCmd.Flags().StringSliceVar(&queryExt, "ext", nil,
 		"filter by file extension, e.g. --ext md,txt")
+	queryCmd.Flags().StringVar(&queryPath, "path", "",
+		"filter to paths under this prefix, e.g. --path /notes/")
+	queryCmd.Flags().StringVar(&queryAfter, "after", "",
+		"filter to files modified on/after this date, e.g. --after 2025-01-01")
 	queryCmd.Flags().BoolVar(&queryJSON, "json", false, "emit raw JSON")
 }

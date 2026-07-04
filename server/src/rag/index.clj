@@ -10,8 +10,10 @@
             [rag.index.walker :as walker]
             [rag.index.extractor :as extractor]
             [rag.index.segmenter :as segmenter]
-            [rag.index.chunker :as chunker])
+            [rag.index.chunker :as chunker]
+            [rag.query.hybrid :as hybrid])
   (:import [java.security MessageDigest]
+           [java.time Instant LocalDate ZoneOffset]
            [java.util.concurrent Executors Future]))
 
 (defonce ^:private component (atom nil))
@@ -144,16 +146,58 @@
            (finish indexed chunks skipped unchanged errors false)))
        (finally (.shutdown pool))))))
 
+(defn- ->epoch-ms
+  "Coerce an mtime bound to epoch millis. Accepts a number (already millis) or an
+  ISO-8601 string — a full instant (`2025-01-01T00:00:00Z`) or a bare date
+  (`2025-01-01`, read as start-of-day UTC)."
+  ^Long [v]
+  (cond
+    (number? v) (long v)
+    (string? v) (try
+                  (.toEpochMilli (Instant/parse v))
+                  (catch Exception _
+                    (-> (LocalDate/parse v)
+                        (.atStartOfDay ZoneOffset/UTC)
+                        (.toInstant)
+                        (.toEpochMilli))))
+    :else (throw (ex-info "mtime_after must be epoch-millis or an ISO-8601 date/instant"
+                          {:type :bad-filter :mtime_after v}))))
+
+(defn- ->filter-spec
+  "Normalise a request `filters` map into the typed spec rag.index.lucene expects
+  (see lucene/filter-query), dropping absent keys. Returns nil when there is no
+  usable constraint, so callers can `some->` it into a filter Query."
+  [{:keys [ext path_prefix mtime_after]}]
+  (let [exts (cond (nil? ext) nil (coll? ext) (vec ext) :else [ext])
+        spec (cond-> {}
+               (seq exts)  (assoc :ext (mapv str exts))
+               path_prefix (assoc :path_prefix (str path_prefix))
+               mtime_after (assoc :mtime_after (->epoch-ms mtime_after)))]
+    (not-empty spec)))
+
 (defn search
-  "Search the index. mode \"keyword\" → BM25 over the text field; mode \"vector\"
-  → embed the query and run kNN over the embedding field. \"hybrid\" (RRF over
-  both) lands in M4. Returns {:hits [...]}."
-  [{:keys [q k mode] :or {k 10 mode "keyword"}}]
-  {:hits (case mode
-           "keyword" (lucene/keyword-search (ensure!) q k)
-           "vector"  (lucene/vector-search (ensure!) (embed/embed-query q) k)
-           (throw (ex-info (str "mode \"" mode "\" not supported yet (have: keyword, vector)")
-                           {:type :unsupported-mode :mode mode})))})
+  "Search the index. Returns {:hits [...]}.
+
+    mode \"keyword\" → BM25 over the text field
+    mode \"vector\"  → embed the query and run kNN over the embedding field
+    mode \"hybrid\"  → run both (each over `k_each` candidates) and fuse with RRF
+
+  `filters` (optional) narrows every mode via a metadata pre-filter — :ext,
+  :path_prefix, :mtime_after (see ->filter-spec). `fusion` (hybrid only) may set
+  :k_each, the candidates drawn from each retriever before fusion (default 50)."
+  [{:keys [q k mode filters fusion] :or {k 10 mode "hybrid"}}]
+  (let [comp   (ensure!)
+        filt   (some-> (->filter-spec filters) lucene/filter-query)
+        k-each (get fusion :k_each 50)]
+    {:hits (case mode
+             "keyword" (lucene/keyword-search comp q k filt)
+             "vector"  (lucene/vector-search comp (embed/embed-query q) k filt)
+             "hybrid"  (hybrid/fuse
+                        (lucene/keyword-search comp q k-each filt)
+                        (lucene/vector-search comp (embed/embed-query q) k-each filt)
+                        k)
+             (throw (ex-info (str "mode \"" mode "\" not supported (have: keyword, vector, hybrid)")
+                             {:type :unsupported-mode :mode mode})))}))
 
 (defn stats
   "Index counts, or zeros if nothing has opened the index yet."

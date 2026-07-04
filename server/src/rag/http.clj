@@ -88,10 +88,10 @@
                (.close out)))))})))
 
 (defn- query-handler [req]
-  (let [{:keys [q k mode] :or {k 10 mode "keyword"}} (read-body req)]
+  (let [{:keys [q k mode filters fusion] :or {k 10 mode "hybrid"}} (read-body req)]
     (if (str/blank? q)
       (json 400 {:error "query requires a non-blank \"q\""})
-      (json 200 (index/search {:q q :k k :mode mode})))))
+      (json 200 (index/search {:q q :k k :mode mode :filters filters :fusion fusion})))))
 
 (defn- shutdown [_]
   ;; Respond first, then exit so the client sees {ok true}. The JVM shutdown hook

@@ -12,7 +12,7 @@ Status legend: ✅ implemented · ⬜ planned (milestone in parens).
 | GET    | `/stats`        | ✅     | `{num_docs, num_chunks}`                 |
 | POST   | `/shutdown`     | ✅     | `{ok: true}`, then the process exits    |
 | POST   | `/index`        | ✅     | `{paths, recursive}` → `{indexed, ...}` |
-| POST   | `/query`        | ✅ (keyword) | `{q, k, mode, filters}` → `{hits}`; only `mode=keyword` for now |
+| POST   | `/query`        | ✅     | `{q, k, mode, filters, fusion}` → `{hits}`; `mode` hybrid (default)/keyword/vector |
 | POST   | `/reindex`      | ⬜ (M5)|                                         |
 | DELETE | `/index`        | ⬜ (M5)|                                         |
 | GET    | `/document/:id` | ⬜ (M6)|                                         |
@@ -64,14 +64,26 @@ Request:
 ```json
 {"q": "how does the chunker pack sentences?",
  "k": 10,
- "mode": "keyword",
- "filters": {"ext": ["md", "txt"]}}
+ "mode": "hybrid",
+ "filters": {"ext": ["md", "txt"],
+             "path_prefix": "/notes/",
+             "mtime_after": "2025-01-01"},
+ "fusion": {"k_each": 50}}
 ```
 
 - `q` — query string; required, non-blank.
 - `k` — max hits (default 10).
-- `mode` — `keyword` only for now; `vector`/`hybrid` return 400 until M3/M4.
-- `filters` — accepted but not yet applied (M4).
+- `mode` — `hybrid` (RRF fusion of both, the default), `keyword` (BM25), or
+  `vector` (kNN over embeddings). Unknown modes return 400.
+- `filters` — optional metadata pre-filter, AND'd, applied to every mode:
+  - `ext` — string or array of file extensions; a chunk matches if its
+    extension is any of them.
+  - `path_prefix` — chunks whose absolute `path` starts with this string.
+  - `mtime_after` — chunks modified on/after this bound (inclusive); epoch
+    millis, or an ISO-8601 date (`2025-01-01`, start-of-day UTC) or instant
+    (`2025-01-01T00:00:00Z`).
+- `fusion` — `hybrid` only. `k_each` is the number of candidates drawn from each
+  retriever before fusion (default 50).
 
 Response:
 

@@ -6,3 +6,8 @@
 2. [ ] indexing status: files, progress bar.
 3. [X] ollama request timed out during long indexing sessions. Increased from 60 to 300, going to be solved later with
    parallel calls.
+4. [ ] return line number of relevant chunks. Not necessarily as part of the mcp.
+5. [ ] CLI flags short version =-e= instead of =--ext=.
+6. [ ] surface =score_breakdown= in the client. The server emits it per hit on
+   hybrid queries ({:keyword _ :vector _}), but the Go =Hit= struct has no field
+   for it, so =query --json= silently drops it.

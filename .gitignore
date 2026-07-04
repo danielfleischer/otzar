@@ -14,3 +14,6 @@ client/myrag
 .lsp/
 .DS_Store
 *.swp
+
+# Emacs backup files
+*.~[0-9]*~

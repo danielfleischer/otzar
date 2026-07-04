@@ -54,7 +54,8 @@
            [org.apache.lucene.document Document Field$Store StringField TextField
             LongPoint IntPoint StoredField NumericDocValuesField KnnFloatVectorField]
            [org.apache.lucene.analysis.standard StandardAnalyzer]
-           [org.apache.lucene.search SearcherManager SearcherFactory KnnFloatVectorQuery TermQuery]
+           [org.apache.lucene.search SearcherManager SearcherFactory KnnFloatVectorQuery
+            TermQuery PrefixQuery BooleanQuery$Builder BooleanClause$Occur Query]
            [org.apache.lucene.queryparser.classic QueryParser]))
 
 (defn open
@@ -138,20 +139,66 @@
       (finally
         (.release manager searcher)))))
 
+(defn- ext-filter
+  "OR of exact-match term filters over the `ext` field (a chunk matches if its
+  extension is any of `exts`)."
+  ^Query [exts]
+  (let [b (BooleanQuery$Builder.)]
+    (doseq [e exts]
+      (.add b (TermQuery. (Term. "ext" ^String e)) BooleanClause$Occur/SHOULD))
+    (.build b)))
+
+(defn filter-query
+  "Build a non-scoring Lucene filter Query from a normalised filter spec, or nil
+  if the spec contributes no constraint. Recognised keys (all optional, AND'd):
+
+    :ext          seq of file extensions        → chunk's `ext` is one of them
+    :path_prefix  string                        → chunk's `path` starts with it
+    :mtime_after  epoch-millis long (inclusive) → chunk's `mtime` >= it
+
+  The result is meant to be used as a FILTER clause (BM25) or as the pre-filter
+  argument to the kNN query (vector), so it never affects scoring — it only
+  restricts the candidate set. rag.index normalises the request's raw `filters`
+  map into this spec (see rag.index/->filter-spec) before calling."
+  ^Query [{:keys [ext path_prefix mtime_after]}]
+  (let [clauses (cond-> []
+                  (seq ext)   (conj (ext-filter ext))
+                  path_prefix (conj (PrefixQuery. (Term. "path" ^String path_prefix)))
+                  mtime_after (conj (LongPoint/newRangeQuery
+                                     "mtime" (long mtime_after) Long/MAX_VALUE)))]
+    (when (seq clauses)
+      (let [b (BooleanQuery$Builder.)]
+        (doseq [c clauses]
+          (.add b ^Query c BooleanClause$Occur/FILTER))
+        (.build b)))))
+
 (defn keyword-search
   "BM25 search over the `text` field for query string `q`; return up to `k` hit
-  maps, best first. Filters are M4 — ignored for now."
-  [{:keys [^StandardAnalyzer analyzer ^SearcherManager manager]} q k]
+  maps, best first. `filter` is an optional non-scoring Query (from filter-query,
+  or nil) applied as a FILTER clause to restrict the candidate set."
+  [{:keys [^StandardAnalyzer analyzer ^SearcherManager manager]} q k filter]
   (let [parser (QueryParser. "text" analyzer)
-        query  (.parse parser (QueryParser/escape q))]
+        text-q (.parse parser (QueryParser/escape q))
+        query  (if filter
+                 (-> (BooleanQuery$Builder.)
+                     (.add ^Query text-q BooleanClause$Occur/MUST)
+                     (.add ^Query filter BooleanClause$Occur/FILTER)
+                     (.build))
+                 text-q)]
     (run-search manager query k)))
 
 (defn vector-search
   "Approximate-nearest-neighbour (HNSW) search over the `embedding` field for the
   query vector `qvec` (a float-array); return up to `k` hit maps, best first. Same
-  hit shape as keyword-search, with :score the cosine vector similarity."
-  [{:keys [^SearcherManager manager]} ^floats qvec k]
-  (run-search manager (KnnFloatVectorQuery. "embedding" qvec (int k)) k))
+  hit shape as keyword-search, with :score the cosine vector similarity. `filter`
+  is an optional Query (from filter-query, or nil) used as the kNN pre-filter, so
+  only chunks matching it are considered as neighbours."
+  [{:keys [^SearcherManager manager]} ^floats qvec k filter]
+  (run-search manager
+              (if filter
+                (KnnFloatVectorQuery. "embedding" qvec (int k) ^Query filter)
+                (KnnFloatVectorQuery. "embedding" qvec (int k)))
+              k))
 
 (defn doc-meta
   "Return {:mtime <long> :content_sha1 <string>} pulled from any one live chunk of
