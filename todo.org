@@ -10,6 +10,10 @@
    Design + feasibility written up in the plan §13.7 (MCP-driven: 1-based line
    range, omitted for non-text extracts).
 5. [ ] CLI flags short version =-e= instead of =--ext=.
-6. [ ] surface =score_breakdown= in the client. The server emits it per hit on
+6. [ ] Adding CLI sub-verbs to make it nicer.
+7. [ ] surface =score_breakdown= in the client. The server emits it per hit on
    hybrid queries ({:keyword _ :vector _}), but the Go =Hit= struct has no field
    for it, so =query --json= silently drops it.
+8. [ ] Orphan cleanup on file delete/rename — needs a delete-detection sweep. I suggest =client index update= that scans for
+   modifications and deletions.
+9. [ ] Dimension-change detection — currently surfaces as a cryptic Lucene throw rather than a clean "run clear-index" message.
