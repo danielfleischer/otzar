@@ -39,23 +39,30 @@
   a tag when there is nothing to (re)embed:
     nil          the extractor skipped this file (unsupported type)
     ::unchanged  already indexed with identical content — skip the costly embed.
-  Change detection is mtime → content-hash: if the file's mtime still matches what
-  we stored, it's untouched and we skip *without even reading it*; otherwise we
-  read + hash and still skip if the content sha1 matches (an mtime bump with no
-  real edit). Only genuinely new/changed files reach the embedder, whose vectors
-  are attached as :embedding; every chunk also carries :content_sha1 for next time.
+  Change detection is model-spec → mtime → content-hash. `spec` is the identity of
+  the embedding model we'd use now (embed/model-spec); a prior chunk is *reusable*
+  only if it was embedded with that same spec — switching MYRAG_EMBED_MODEL (or a
+  re-pull that bumps the digest) makes the stored vectors stale, so it forces a
+  re-embed even when the bytes are untouched. Given a reusable prior: if the file's
+  mtime still matches, it's skipped *without even reading it*; otherwise we read +
+  hash and still skip if the content sha1 matches (an mtime bump with no real edit).
+  Only genuinely new/changed/re-modelled files reach the embedder, whose vectors are
+  attached as :embedding; every chunk also carries :content_sha1 and :model_spec for
+  next time. (A change in embedding *dimension* additionally requires a full reindex
+  — clear-index — since Lucene stores one vector dimension per field.)
   `cancelled?` is threaded into the embedder so a large file's embedding is
   abandoned promptly (between batches) when the client disconnects."
-  [component ^java.io.File f cancelled?]
-  (let [path   (.getAbsolutePath f)
-        doc-id (sha1 path)
-        mtime  (.lastModified f)
-        prior  (lucene/doc-meta component doc-id)]
-    (if (and prior (= mtime (:mtime prior)))
+  [component spec ^java.io.File f cancelled?]
+  (let [path      (.getAbsolutePath f)
+        doc-id    (sha1 path)
+        mtime     (.lastModified f)
+        prior     (lucene/doc-meta component doc-id)
+        reusable? (and prior (= spec (:model_spec prior)))]
+    (if (and reusable? (= mtime (:mtime prior)))
       ::unchanged
       (when-let [text (extractor/extract f)]
         (let [csha (sha1 text)]
-          (if (and prior (= csha (:content_sha1 prior)))
+          (if (and reusable? (= csha (:content_sha1 prior)))
             ::unchanged
             (let [ext    (walker/ext f)
                   chunks (chunker/pack (segmenter/segment text))
@@ -69,6 +76,7 @@
                        :chunk_idx    chunk_idx
                        :text         text
                        :content_sha1 csha
+                       :model_spec   spec
                        :embedding    embedding})
                     chunks vecs))))))))
 
@@ -79,9 +87,9 @@
     {:file f :unchanged true}   already indexed, identical content (nothing embedded)
     {:file f :chunks <seq>}     ok; empty/nil chunks means the extractor skipped it
     {:file f :error <msg>}      extract or embed threw (incl. a cancelled embed)"
-  [component ^java.io.File f cancelled?]
+  [component spec ^java.io.File f cancelled?]
   (try
-    (let [r (file->chunks component f cancelled?)]
+    (let [r (file->chunks component spec f cancelled?)]
       (if (= ::unchanged r)
         {:file f :unchanged true}
         {:file f :chunks r}))
@@ -108,10 +116,11 @@
   ([paths opts] (index-paths! paths opts (constantly false)))
   ([paths {:keys [recursive] :or {recursive true}} cancelled?]
    (let [idx    (ensure!)
+         spec   (embed/model-spec)  ; one Ollama metadata probe per run; stamped on every chunk
          files  (distinct (mapcat #(walker/walk % {:recursive recursive}) paths))
          pool   (Executors/newFixedThreadPool config/index-concurrency)
          submit (fn [^java.io.File f]
-                  (.submit pool ^Callable (fn [] (embed-file-result idx f cancelled?))))
+                  (.submit pool ^Callable (fn [] (embed-file-result idx spec f cancelled?))))
          finish (fn [indexed chunks skipped unchanged errors cancelled]
                   (lucene/commit! idx)
                   (cond-> {:indexed indexed :chunks chunks :skipped skipped

@@ -12,7 +12,8 @@
   Vectors come back as float-arrays so they drop straight into Lucene's
   KnnFloatVectorField (rag.index.lucene). The vector dimension is whatever the
   model emits (embeddinggemma → 768); nothing here hardcodes it."
-  (:require [jsonista.core :as j]
+  (:require [clojure.string :as str]
+            [jsonista.core :as j]
             [rag.config :as config])
   (:import [java.net URI]
            [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
@@ -50,6 +51,36 @@
                       {:type :embed-error
                        :status (.statusCode resp)
                        :body (.body resp)})))))
+
+(defn- ollama-get
+  "GET `path` on the Ollama server; parsed keyword-keyed body, or nil if the
+  request is non-200 or the server is unreachable. Model metadata is best-effort:
+  a failure degrades the stored spec, it doesn't break indexing."
+  [path]
+  (try
+    (let [req  (-> (HttpRequest/newBuilder (URI/create (str config/ollama-url path)))
+                   (.timeout (Duration/ofSeconds 10))
+                   (.GET)
+                   (.build))
+          resp (.send ^HttpClient @client req (HttpResponse$BodyHandlers/ofString))]
+      (when (= 200 (.statusCode resp))
+        (j/read-value (.body resp) mapper)))
+    (catch java.io.IOException _ nil)))
+
+(defn- ollama-show
+  "POST /api/show for `model`; parsed body or nil (best-effort, like ollama-get)."
+  [model]
+  (try
+    (let [body (j/write-value-as-string {:model model})
+          req  (-> (HttpRequest/newBuilder (URI/create (str config/ollama-url "/api/show")))
+                   (.timeout (Duration/ofSeconds 10))
+                   (.header "Content-Type" "application/json")
+                   (.POST (HttpRequest$BodyPublishers/ofString body))
+                   (.build))
+          resp (.send ^HttpClient @client req (HttpResponse$BodyHandlers/ofString))]
+      (when (= 200 (.statusCode resp))
+        (j/read-value (.body resp) mapper)))
+    (catch java.io.IOException _ nil)))
 
 (defn- ->floats ^floats [row]
   (float-array (map float row)))
@@ -100,3 +131,41 @@
   Returns one float-array."
   ^floats [text]
   (first (embed-prepared [(str query-prompt text)] (constantly false))))
+
+(defn- tag-digest
+  "First 12 hex of Ollama's manifest sha256 for `tag`, from /api/tags, or nil.
+  This is the model's real version: re-pulling or repointing a tag changes the
+  digest even when the name is unchanged. Matches an exact tag, else `<name>:latest`,
+  else any tag sharing the base name."
+  [tag]
+  (let [base   (first (str/split tag #":"))
+        models (:models (ollama-get "/api/tags"))
+        match  (or (first (filter #(= tag (:name %)) models))
+                   (first (filter #(= (str base ":latest") (:name %)) models))
+                   (first (filter #(str/starts-with? (str (:name %)) (str base ":")) models)))
+        digest (some-> (:digest match) (str/replace #"^sha256:" ""))]
+    (when digest (subs digest 0 (min 12 (count digest))))))
+
+(defn- model-dim
+  "Embedding dimension of `model` from /api/show's model_info (the
+  `<arch>.embedding_length` entry), or nil if Ollama doesn't report it."
+  [model]
+  (some (fn [[k v]] (when (str/ends-with? (name k) ".embedding_length") v))
+        (:model_info (ollama-show model))))
+
+(defn model-spec
+  "A stable identity for the *currently configured* embedding model, stored on each
+  indexed chunk so a reindex can tell whether a chunk's vector still comes from the
+  same model. Format:
+    \"<model>@<digest>/<dim>d\"   e.g. \"embeddinggemma@85462619ee72/768d\"
+  <digest> is the Ollama manifest hash (the real version — survives a rename, bumps
+  on a re-pull), <dim> the embedding dimension (a change here means the whole Lucene
+  vector field must be rebuilt, not just re-embedded). Any part Ollama won't report
+  is omitted; if it's unreachable for metadata this degrades to the bare model name,
+  so indexing still runs. Compared by plain string equality (rag.index/file->chunks)."
+  []
+  (let [digest (tag-digest config/embed-model)
+        dim    (model-dim config/embed-model)]
+    (str config/embed-model
+         (when digest (str "@" digest))
+         (when dim (str "/" dim "d")))))

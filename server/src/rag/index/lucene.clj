@@ -24,7 +24,8 @@
      :mtime     1712345678000             ; epoch millis (long)
      :chunk_idx 7                         ; int, position within the source doc
      :text      \"...chunk text...\"
-     :content_sha1 \"e3b0c4...\"}          ; sha1 of the source text (reindex gate)
+     :content_sha1 \"e3b0c4...\"           ; sha1 of the source text (reindex gate)
+     :model_spec \"embeddinggemma@85462619ee72/768d\"} ; embedding-model identity (reindex invalidation)
 
   Field mapping (docs/rag-project-plan.md §4.1 — the M1 subset):
     id        StringField        stored, indexed (not analyzed)
@@ -35,6 +36,7 @@
     chunk_idx IntPoint (range)  + StoredField (retrieval)
     text      TextField          stored, indexed  ← the only analyzed field; BM25 here
     content_sha1 StoredField      stored only (retrieved by doc_id for reindex checks)
+    model_spec   StoredField      stored only (embedding-model identity; reindex invalidation)
 
   ─────────────────────────────────────────────────────────────────────────────
   Hit map (output of keyword-search) — best first
@@ -68,7 +70,7 @@
         manager   (SearcherManager. writer (SearcherFactory.))]
     {:dir directory :analyzer analyzer :writer writer :manager manager}))
 
-(defn- chunk->doc ^Document [{:keys [id doc_id path ext mtime chunk_idx text embedding content_sha1]}]
+(defn- chunk->doc ^Document [{:keys [id doc_id path ext mtime chunk_idx text embedding content_sha1 model_spec]}]
   (let [doc (Document.)]
     (.add doc (StringField. "id" id Field$Store/YES))
     (.add doc (StringField. "doc_id" doc_id Field$Store/YES))
@@ -85,6 +87,11 @@
     ;; (rag.index/file->chunks). Stored only — looked up by the indexed doc_id.
     (when content_sha1
       (.add doc (StoredField. "content_sha1" ^String content_sha1)))
+    ;; model_spec records the embedding-model identity (name@digest/dim) behind
+    ;; :embedding, so a reindex can invalidate stale vectors after a model change
+    ;; instead of skipping the file as unchanged (rag.index/file->chunks). Stored only.
+    (when model_spec
+      (.add doc (StoredField. "model_spec" ^String model_spec)))
     ;; embedding is optional: keyword-only indexing (pre-M3, or if the embedder is
     ;; unavailable) simply omits it. The field's dimension is inferred from the
     ;; float-array length and must be consistent across all docs in the field.
@@ -201,8 +208,9 @@
               k))
 
 (defn doc-meta
-  "Return {:mtime <long> :content_sha1 <string>} pulled from any one live chunk of
-  `doc-id`, or nil if the doc isn't indexed. Thread-safe (acquires its own
+  "Return {:mtime <long> :content_sha1 <string> :model_spec <string>} pulled from
+  any one live chunk of `doc-id`, or nil if the doc isn't indexed (:model_spec is
+  nil for chunks written before model tracking). Thread-safe (acquires its own
   searcher), so reindex change-detection can run it from worker threads while the
   writer is mid-batch — it sees the last committed state, which is exactly what
   the check wants to compare against."
@@ -214,7 +222,8 @@
         (when (pos? (alength sds))
           (let [doc (.document (.storedFields searcher) (.doc (aget sds 0)))]
             {:mtime        (field-long doc "mtime")
-             :content_sha1 (.get doc "content_sha1")})))
+             :content_sha1 (.get doc "content_sha1")
+             :model_spec   (.get doc "model_spec")})))
       (finally
         (.release manager searcher)))))
 
