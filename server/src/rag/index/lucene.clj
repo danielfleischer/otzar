@@ -49,7 +49,10 @@
   - BM25 is Lucene's default similarity, so keyword-search scores are BM25.
   - The query string is escaped before parsing so natural-language queries (with
     `?`, `*`, etc.) match literally instead of being read as wildcard syntax.
-  - Deletion/reindex by doc_id is M5 — this assumes a fresh or additive index."
+  - Reindex-by-doc_id works: add-chunks! replaces a file's chunks atomically
+    (updateDocuments keyed on doc_id). Standalone deletion (removing a doc without
+    re-adding) is not implemented — orphaned chunks from a deleted source file
+    persist until that file is reindexed (todo.org #8)."
   (:import [org.apache.lucene.store FSDirectory]
            [org.apache.lucene.index IndexWriter IndexWriterConfig MultiTerms Term
             VectorSimilarityFunction]

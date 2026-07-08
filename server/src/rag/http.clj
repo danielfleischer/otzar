@@ -1,6 +1,6 @@
 (ns rag.http
-  "Ring/reitit handlers. M1 surface: /health, /stats, /index, /query, /shutdown.
-  Later milestones add /reindex, DELETE /index, /document/:id."
+  "Ring/reitit handlers: /health, /stats, /index, /query, /document/:id, /shutdown.
+  Deletion verbs (DELETE /index, /reindex) are unscheduled — see docs/api.md."
   (:require [reitit.ring :as ring]
             [ring.core.protocols :as rcp]
             [jsonista.core :as j]

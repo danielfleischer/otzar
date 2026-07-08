@@ -11,11 +11,11 @@ Status legend: ✅ implemented · ⬜ planned (milestone in parens).
 | GET    | `/health`       | ✅     | `{status, uptime_s}`                    |
 | GET    | `/stats`        | ✅     | `{num_docs, num_chunks}`                 |
 | POST   | `/shutdown`     | ✅     | `{ok: true}`, then the process exits    |
-| POST   | `/index`        | ✅     | `{paths, recursive}` → `{indexed, ...}` |
+| POST   | `/index`        | ✅     | `{paths, recursive}` → `{indexed, ...}`; incremental — re-run to skip unchanged files and replace changed ones |
 | POST   | `/query`        | ✅     | `{q, k, mode, filters, fusion}` → `{hits}`; `mode` hybrid (default)/keyword/vector |
-| POST   | `/reindex`      | ⬜ (M5)|                                         |
-| DELETE | `/index`        | ⬜ (M5)|                                         |
 | GET    | `/document/:id` | ✅     | `id` is a `doc_id` (whole file) or a chunk `id`; 404 if unknown |
+| POST   | `/reindex`      | ⬜      | Unscheduled — `POST /index` is already incremental, so a separate verb only earns its keep as a "force re-embed unchanged" flag |
+| DELETE | `/index`        | ⬜      | Unscheduled — doc removal / orphan cleanup on file delete+rename (todo.org #8); today docs are only replaced on reindex, never deleted |
 
 ## Lifecycle files (`~/.myrag/`)
 
