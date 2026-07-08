@@ -44,6 +44,9 @@
 (defn- stats [_]
   (json 200 (index/stats)))
 
+(defn- paths [_]
+  (json 200 (index/paths)))
+
 (def ^:private heartbeat-secs
   "How often, in seconds, to poke the response socket while indexing so we notice
   a disconnected client within roughly this bound (independent of file size)."
@@ -119,6 +122,7 @@
    (ring/router
     [["/health"   {:get  health}]
      ["/stats"    {:get  (with-errors stats)}]
+     ["/paths"    {:get  (with-errors paths)}]
      ["/index"    {:post (with-errors index-handler)}]
      ["/query"    {:post (with-errors query-handler)}]
      ["/document/:id" {:get (with-errors document-handler)}]

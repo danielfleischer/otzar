@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"myrag/internal/lifecycle"
@@ -103,4 +104,24 @@ func (c *Client) Query(req QueryRequest) (*QueryResult, error) {
 		return nil, err
 	}
 	return &r, nil
+}
+
+// Document fetches GET /document/:id, where id is a doc_id (whole file) or a chunk
+// id ("<doc_id>:<chunk_idx>"). A 404 (unknown id, or the file gone from disk)
+// surfaces as an error.
+func (c *Client) Document(id string) (*Document, error) {
+	var d Document
+	if err := c.getJSON("/document/"+url.PathEscape(id), &d); err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
+// Paths fetches GET /paths: the distinct source files currently indexed.
+func (c *Client) Paths() (*PathsResult, error) {
+	var p PathsResult
+	if err := c.getJSON("/paths", &p); err != nil {
+		return nil, err
+	}
+	return &p, nil
 }

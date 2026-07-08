@@ -305,6 +305,27 @@
       (finally
         (.release manager searcher)))))
 
+(defn paths
+  "component -> [str]
+  Sorted distinct source-file paths currently in the index. The `path` field has
+  one indexed term per file (shared by all of that file's chunks), so its term
+  dictionary *is* the set of indexed files; Lucene yields the terms in byte order,
+  which for these plain path strings reads as sorted. Empty when nothing is
+  indexed. Thread-safe. Backs GET /paths (MCP list_indexed_paths)."
+  [{:keys [^SearcherManager manager]}]
+  (let [searcher (.acquire manager)]
+    (try
+      (if-let [terms (MultiTerms/getTerms (.getIndexReader searcher) "path")]
+        (let [it (.iterator terms)]
+          (loop [acc (transient [])]
+            (let [br (.next it)]
+              (if (nil? br)
+                (persistent! acc)
+                (recur (conj! acc (.utf8ToString ^org.apache.lucene.util.BytesRef br)))))))
+        [])
+      (finally
+        (.release manager searcher)))))
+
 (defn close
   "component -> nil
   Commit and release everything (manager, writer, directory). Called on server

@@ -59,3 +59,25 @@ type Hit struct {
 	ChunkIdx int     `json:"chunk_idx"`
 	MTime    int64   `json:"mtime"`
 }
+
+// Document is the body returned by GET /document/:id. It covers both shapes the
+// endpoint can return: a single chunk (ChunkIdx set, Text is the stored chunk) or
+// a whole file (NumChunks set, Text is the source read fresh from disk). ChunkIdx
+// is a pointer because chunk index 0 is valid and must survive omitempty.
+type Document struct {
+	ID        string `json:"id,omitempty"`
+	DocID     string `json:"doc_id"`
+	Path      string `json:"path"`
+	Ext       string `json:"ext,omitempty"`
+	MTime     int64  `json:"mtime"`
+	ChunkIdx  *int   `json:"chunk_idx,omitempty"`
+	NumChunks int    `json:"num_chunks,omitempty"`
+	Text      string `json:"text"`
+	Stale     bool   `json:"stale,omitempty"` // file changed on disk since indexing
+}
+
+// PathsResult is the body returned by GET /paths.
+type PathsResult struct {
+	Count int      `json:"count"`
+	Paths []string `json:"paths"`
+}

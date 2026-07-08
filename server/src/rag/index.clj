@@ -249,6 +249,17 @@
     (lucene/stats @component)
     {:num_docs 0 :num_chunks 0}))
 
+(defn paths
+  "-> {:count int, :paths [str]}
+  Distinct source-file paths currently indexed, sorted. Opens the index on first
+  use (like search, and unlike stats) so it reflects what's actually on disk even
+  on a freshly-booted server that hasn't served a query yet — the MCP
+  list_indexed_paths tool answers \"do you have access to X?\", so a lazy
+  not-yet-opened index must not read back as empty. Backs GET /paths."
+  []
+  (let [ps (lucene/paths (ensure!))]
+    {:count (count ps) :paths ps}))
+
 (defn close!
   "-> nil
   Close and forget the index component. No-op if never opened."
