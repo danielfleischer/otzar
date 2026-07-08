@@ -93,6 +93,17 @@
       (json 400 {:error "query requires a non-blank \"q\""})
       (json 200 (index/search {:q q :k k :mode mode :filters filters :fusion fusion})))))
 
+(defn- document-handler
+  "GET /document/:id — fetch one chunk or a whole file by id (see index/document).
+  404 when the id isn't indexed, or the file backing a doc_id is gone from disk."
+  [req]
+  (let [id (get-in req [:path-params :id])]
+    (if (str/blank? id)
+      (json 400 {:error "document requires an id"})
+      (if-let [doc (index/document id)]
+        (json 200 doc)
+        (json 404 {:error (str "no indexed document or chunk for id \"" id "\"")})))))
+
 (defn- shutdown [_]
   ;; Respond first, then exit so the client sees {ok true}. The JVM shutdown hook
   ;; (see rag.main) closes the index and removes the port file on the way out.
@@ -110,5 +121,6 @@
      ["/stats"    {:get  (with-errors stats)}]
      ["/index"    {:post (with-errors index-handler)}]
      ["/query"    {:post (with-errors query-handler)}]
+     ["/document/:id" {:get (with-errors document-handler)}]
      ["/shutdown" {:post shutdown}]])
    (ring/create-default-handler)))

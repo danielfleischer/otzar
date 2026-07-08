@@ -234,6 +234,53 @@
       (finally
         (.release manager searcher)))))
 
+(defn get-chunk
+  "component, id:str -> {:id :doc_id :path :ext :mtime :chunk_idx :text} | nil
+  Fetch the single chunk whose `id` field equals `id` (the \"<doc_id>:<idx>\"
+  form), returning its stored fields, or nil if no such chunk is indexed. The
+  :text is the stored chunk text (not the source file). Thread-safe (acquires its
+  own searcher). Backs GET /document/:id for a chunk id."
+  [{:keys [^SearcherManager manager]} id]
+  (let [searcher (.acquire manager)]
+    (try
+      (let [top (.search searcher (TermQuery. (Term. "id" ^String id)) (int 1))
+            sds (.scoreDocs top)]
+        (when (pos? (alength sds))
+          (let [doc (.document (.storedFields searcher) (.doc (aget sds 0)))]
+            {:id        (.get doc "id")
+             :doc_id    (.get doc "doc_id")
+             :path      (.get doc "path")
+             :ext       (.get doc "ext")
+             :mtime     (field-long doc "mtime")
+             :chunk_idx (field-int doc "chunk_idx")
+             :text      (.get doc "text")})))
+      (finally
+        (.release manager searcher)))))
+
+(defn doc-summary
+  "component, doc-id:str -> {:doc_id :path :ext :mtime :content_sha1 :num_chunks} | nil
+  Per-file metadata for `doc-id`, read from any one of its indexed chunks
+  (path/ext/mtime/content_sha1 are identical across a file's chunks; :num_chunks
+  is how many are live). nil if the doc isn't indexed. Thread-safe. Backs
+  GET /document/:id for a doc_id: the facade uses :path to read the file fresh
+  from disk and :content_sha1 to detect drift."
+  [{:keys [^SearcherManager manager]} doc-id]
+  (let [searcher (.acquire manager)]
+    (try
+      (let [q   (TermQuery. (Term. "doc_id" ^String doc-id))
+            top (.search searcher q (int 1))
+            sds (.scoreDocs top)]
+        (when (pos? (alength sds))
+          (let [doc (.document (.storedFields searcher) (.doc (aget sds 0)))]
+            {:doc_id       doc-id
+             :path         (.get doc "path")
+             :ext          (.get doc "ext")
+             :mtime        (field-long doc "mtime")
+             :content_sha1 (.get doc "content_sha1")
+             :num_chunks   (.count searcher q)})))
+      (finally
+        (.release manager searcher)))))
+
 (defn- distinct-terms
   "Count distinct indexed values of `field` across the reader."
   ^long [reader ^String field]

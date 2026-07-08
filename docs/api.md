@@ -15,7 +15,7 @@ Status legend: ✅ implemented · ⬜ planned (milestone in parens).
 | POST   | `/query`        | ✅     | `{q, k, mode, filters, fusion}` → `{hits}`; `mode` hybrid (default)/keyword/vector |
 | POST   | `/reindex`      | ⬜ (M5)|                                         |
 | DELETE | `/index`        | ⬜ (M5)|                                         |
-| GET    | `/document/:id` | ⬜ (M6)|                                         |
+| GET    | `/document/:id` | ✅     | `id` is a `doc_id` (whole file) or a chunk `id`; 404 if unknown |
 
 ## Lifecycle files (`~/.myrag/`)
 
@@ -97,6 +97,35 @@ Response:
 
 `mtime` is epoch milliseconds (a Lucene `LongPoint`); the ISO-8601 form in the
 plan is deferred.
+
+### GET /document/:id
+
+Fetch one item by id. What `id` refers to decides the shape:
+
+- **A chunk `id`** (`<doc_id>:<chunk_idx>`, contains a colon) → that single chunk,
+  read straight from the index:
+
+  ```json
+  {"id": "a1b2:7", "doc_id": "a1b2", "path": "/notes/rag.md",
+   "ext": "md", "mtime": 1712345678000, "chunk_idx": 7,
+   "text": "...stored chunk text..."}
+  ```
+
+- **A bare `doc_id`** (whole file) → the file re-read fresh **from disk** at its
+  indexed `path`, so `text` is the faithful source (original whitespace, newlines,
+  line numbers) — *not* the space-joined, blank-line-stripped chunk text:
+
+  ```json
+  {"doc_id": "a1b2", "path": "/notes/rag.md", "ext": "md",
+   "mtime": 1712345678000, "num_chunks": 3,
+   "text": "...full file contents...", "stale": true}
+  ```
+
+  - `stale` — present and `true` only when the file's current sha1 differs from
+    what was indexed (it changed since the last index). Absent when they match.
+
+Returns `404 {"error": "..."}` when the id isn't indexed, or (for a `doc_id`) the
+file is no longer readable on disk.
 
 ## Errors
 

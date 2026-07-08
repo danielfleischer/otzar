@@ -4,7 +4,9 @@
   component, runs the walk → extract → chunk → add pipeline, and exposes
   search/stats/close. Every Lucene specific lives behind rag.index.lucene; this
   namespace only knows the chunk/hit contract."
-  (:require [rag.config :as config]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
+            [rag.config :as config]
             [rag.embed :as embed]
             [rag.index.lucene :as lucene]
             [rag.index.walker :as walker]
@@ -210,6 +212,34 @@
                         k)
              (throw (ex-info (str "mode \"" mode "\" not supported (have: keyword, vector, hybrid)")
                              {:type :unsupported-mode :mode mode})))}))
+
+(defn document
+  "id:str -> {..} | nil
+  Fetch by id for GET /document/:id. `id` is either a chunk id (\"<doc_id>:<idx>\",
+  which contains a colon) or a bare doc_id (a whole file).
+
+  Chunk id → the stored chunk, straight from Lucene:
+    {:id :doc_id :path :ext :mtime :chunk_idx :text}
+
+  doc_id → the whole file. We deliberately re-read the source file from disk at its
+  indexed :path rather than stitching the stored chunks back together — the chunker
+  joins sentences with single spaces and drops blank lines, so reassembled chunk
+  text is lossy (wrong whitespace, no original newlines/line numbers). Disk is the
+  faithful copy. Returns:
+    {:doc_id :path :ext :mtime :num_chunks :text <disk contents> [:stale true]}
+  :stale is added when the file's current sha1 differs from what was indexed (it
+  changed since indexing). :content_sha1 is not surfaced.
+
+  Returns nil when the id isn't indexed, or (doc_id) the file is no longer readable
+  on disk — the handler maps nil to 404."
+  [id]
+  (let [comp (ensure!)]
+    (if (str/includes? id ":")
+      (lucene/get-chunk comp id)
+      (when-let [{:keys [path content_sha1] :as info} (lucene/doc-summary comp id)]
+        (when-let [text (extractor/extract (io/file path))]
+          (cond-> (-> info (dissoc :content_sha1) (assoc :text text))
+            (not= content_sha1 (sha1 text)) (assoc :stale true)))))))
 
 (defn stats
   "-> {:num_docs int, :num_chunks int}
