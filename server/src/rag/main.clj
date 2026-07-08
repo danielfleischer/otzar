@@ -22,7 +22,12 @@
   is the server/ dir (see client lifecycle.go), so we drop it there."
   (File. ".nrepl-port"))
 
-(defn -main [& _args]
+(defn -main
+  "& _args -> never returns
+  Start the nREPL and Jetty (on an ephemeral port), publish both ports so the
+  client and CIDER can discover them, register a shutdown hook that closes the
+  index and removes the port files, then block on the server."
+  [& _args]
   (config/ensure-dir!)
   (let [nrepl-srv (let [srv (nrepl-server/start-server
                              :port config/nrepl-port

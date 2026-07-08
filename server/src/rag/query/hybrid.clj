@@ -18,7 +18,8 @@
   1.5)
 
 (defn fuse
-  "Fuse two ranked hit lists into one via Reciprocal Rank Fusion.
+  "keyword-hits:[hit], vector-hits:[hit], k:int -> [hit]
+  Fuse two ranked hit lists into one via Reciprocal Rank Fusion.
 
   Inputs
     `keyword-hits`, `vector-hits` — seqs of hit maps, each already ordered

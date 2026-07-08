@@ -61,7 +61,8 @@
            [org.apache.lucene.queryparser.classic QueryParser]))
 
 (defn open
-  "Open (creating if absent) the Lucene index rooted at `dir` (a java.io.File).
+  "File -> component
+  Open (creating if absent) the Lucene index rooted at `dir` (a java.io.File).
   Return the component map the other fns receive."
   [dir]
   (let [directory (FSDirectory/open (.toPath dir))
@@ -100,7 +101,8 @@
     doc))
 
 (defn add-chunks!
-  "Add a seq of chunk maps to the index, one document per chunk. Idempotent per
+  "component, [chunk] -> nil
+  Add a seq of chunk maps to the index, one document per chunk. Idempotent per
   source file: chunks are grouped by :doc_id and each group atomically *replaces*
   any existing documents with that doc_id (via updateDocuments), so re-indexing a
   file swaps in its current chunks instead of stacking duplicates on the old ones.
@@ -110,7 +112,8 @@
     (.updateDocuments writer (Term. "doc_id" ^String doc-id) (map chunk->doc group))))
 
 (defn commit!
-  "Flush pending additions so they become searchable and durable, then refresh
+  "component -> nil
+  Flush pending additions so they become searchable and durable, then refresh
   readers."
   [{:keys [^IndexWriter writer ^SearcherManager manager]}]
   (.commit writer)
@@ -156,7 +159,8 @@
     (.build b)))
 
 (defn filter-query
-  "Build a non-scoring Lucene filter Query from a normalised filter spec, or nil
+  "{:ext [str], :path_prefix str, :mtime_after long} -> Query | nil
+  Build a non-scoring Lucene filter Query from a normalised filter spec, or nil
   if the spec contributes no constraint. Recognised keys (all optional, AND'd):
 
     :ext          seq of file extensions        → chunk's `ext` is one of them
@@ -180,7 +184,8 @@
         (.build b)))))
 
 (defn keyword-search
-  "BM25 search over the `text` field for query string `q`; return up to `k` hit
+  "component, q:str, k:int, filter:Query|nil -> [hit]
+  BM25 search over the `text` field for query string `q`; return up to `k` hit
   maps, best first. `filter` is an optional non-scoring Query (from filter-query,
   or nil) applied as a FILTER clause to restrict the candidate set."
   [{:keys [^StandardAnalyzer analyzer ^SearcherManager manager]} q k filter]
@@ -195,7 +200,8 @@
     (run-search manager query k)))
 
 (defn vector-search
-  "Approximate-nearest-neighbour (HNSW) search over the `embedding` field for the
+  "component, qvec:float-array, k:int, filter:Query|nil -> [hit]
+  Approximate-nearest-neighbour (HNSW) search over the `embedding` field for the
   query vector `qvec` (a float-array); return up to `k` hit maps, best first. Same
   hit shape as keyword-search, with :score the cosine vector similarity. `filter`
   is an optional Query (from filter-query, or nil) used as the kNN pre-filter, so
@@ -208,7 +214,8 @@
               k))
 
 (defn doc-meta
-  "Return {:mtime <long> :content_sha1 <string> :model_spec <string>} pulled from
+  "component, doc-id:str -> {:mtime long, :content_sha1 str, :model_spec str} | nil
+  Return {:mtime <long> :content_sha1 <string> :model_spec <string>} pulled from
   any one live chunk of `doc-id`, or nil if the doc isn't indexed (:model_spec is
   nil for chunks written before model tracking). Thread-safe (acquires its own
   searcher), so reindex change-detection can run it from worker threads while the
@@ -237,7 +244,8 @@
     0))
 
 (defn stats
-  "Return {:num_docs <distinct doc_id count> :num_chunks <live doc count>}."
+  "component -> {:num_docs long, :num_chunks int}
+  Return {:num_docs <distinct doc_id count> :num_chunks <live doc count>}."
   [{:keys [^SearcherManager manager]}]
   (let [searcher (.acquire manager)]
     (try
@@ -248,7 +256,8 @@
         (.release manager searcher)))))
 
 (defn close
-  "Commit and release everything (manager, writer, directory). Called on server
+  "component -> nil
+  Commit and release everything (manager, writer, directory). Called on server
   shutdown."
   [{:keys [^SearcherManager manager ^IndexWriter writer dir]}]
   (.close manager)

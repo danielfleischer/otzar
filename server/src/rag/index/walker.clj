@@ -24,7 +24,8 @@
     ".gradle" ".mvn" "vendor" ".myrag"})
 
 (defn ext
-  "Lower-cased extension of `f` (without the dot), or nil if it has none."
+  "File -> str | nil
+  Lower-cased extension of `f` (without the dot), or nil if it has none."
   [^java.io.File f]
   (let [n (.getName f)
         i (.lastIndexOf n ".")]
@@ -32,7 +33,8 @@
       (str/lower-case (subs n (inc i))))))
 
 (defn indexable-file?
-  "True when `f` is a non-hidden regular file with a text-like extension."
+  "File -> bool
+  True when `f` is a non-hidden regular file with a text-like extension."
   [^java.io.File f]
   (and (.isFile f)
        (not (.isHidden f))
@@ -43,7 +45,8 @@
       (contains? skip-dirs (.getName d))))
 
 (defn walk
-  "Return a lazy seq of indexable java.io.File values under `path`.
+  "str|File, {:recursive bool} -> (seq File)
+  Return a lazy seq of indexable java.io.File values under `path`.
   A path that is itself a file is yielded when it's indexable; a directory is
   expanded, with `:recursive` controlling whether subdirectories are descended.
   Nonexistent paths yield nothing."

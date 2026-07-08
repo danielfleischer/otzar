@@ -99,7 +99,11 @@
   (future (Thread/sleep 150) (System/exit 0))
   (json 200 {:ok true}))
 
-(defn app []
+(defn app
+  "-> Ring handler
+  Build the reitit Ring handler for the M1 route surface, with a default handler
+  for unmatched routes."
+  []
   (ring/ring-handler
    (ring/router
     [["/health"   {:get  health}]

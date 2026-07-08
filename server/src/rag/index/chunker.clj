@@ -18,7 +18,8 @@
   {:core 3 :context 1})
 
 (defn pack
-  "Group `sentences` into overlapping chunks. Returns a vector of
+  "[str], {:core int, :context int}? -> [{:chunk_idx int, :text str}]
+  Group `sentences` into overlapping chunks. Returns a vector of
   {:chunk_idx i :text s} maps in order, where :chunk_idx is the 0-based position
   and :text is the chunk's sentences joined by a single space.
 

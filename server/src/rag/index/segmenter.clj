@@ -16,7 +16,8 @@
            [java.util Locale]))
 
 (defn segment
-  "Split `text` into a vector of sentence strings, in order. Each sentence is
+  "str -> [str]
+  Split `text` into a vector of sentence strings, in order. Each sentence is
   trimmed and empty results dropped; blank/nil input yields an empty vector.
   Segmentation uses locale-neutral (ROOT) Unicode sentence rules, so it works
   across scripts."

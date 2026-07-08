@@ -21,7 +21,8 @@
 (defn- open? [] (some? @component))
 
 (defn ensure!
-  "Return the open Lucene component, opening it under ~/.myrag/index on first use.
+  "-> component
+  Return the open Lucene component, opening it under ~/.myrag/index on first use.
   Thread-safe: concurrent callers race to open, and the loser's value is dropped."
   []
   (or @component
@@ -96,7 +97,8 @@
     (catch Exception e {:file f :error (.getMessage e)})))
 
 (defn index-paths!
-  "Walk `paths`, extract + chunk + embed each file, and add all chunks to the
+  "paths:[str|File], {:recursive bool}, cancelled?:(->bool)? -> {:indexed :chunks :skipped :unchanged :errors [..] :cancelled?}
+  Walk `paths`, extract + chunk + embed each file, and add all chunks to the
   index. The change-check + extract+embed work runs through a bounded pool of
   `config/index-concurrency` workers (it is Ollama-bound and parallelizes well);
   results are drained on this thread — in file-submission order — and written
@@ -185,7 +187,8 @@
     (not-empty spec)))
 
 (defn search
-  "Search the index. Returns {:hits [...]}.
+  "{:q str, :k int?, :mode str?, :filters map?, :fusion map?} -> {:hits [hit]}
+  Search the index. Returns {:hits [...]}.
 
     mode \"keyword\" → BM25 over the text field
     mode \"vector\"  → embed the query and run kNN over the embedding field
@@ -209,14 +212,16 @@
                              {:type :unsupported-mode :mode mode})))}))
 
 (defn stats
-  "Index counts, or zeros if nothing has opened the index yet."
+  "-> {:num_docs int, :num_chunks int}
+  Index counts, or zeros if nothing has opened the index yet."
   []
   (if (open?)
     (lucene/stats @component)
     {:num_docs 0 :num_chunks 0}))
 
 (defn close!
-  "Close and forget the index component. No-op if never opened."
+  "-> nil
+  Close and forget the index component. No-op if never opened."
   []
   (when-let [c @component]
     (lucene/close c)

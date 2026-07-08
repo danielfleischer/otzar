@@ -22,7 +22,8 @@
         :else                (recur (inc i))))))
 
 (defn extract
-  "Return the text content of `file` as a String, or nil if it should be skipped
+  "File -> str | nil
+  Return the text content of `file` as a String, or nil if it should be skipped
   (empty, too large, unreadable, or binary)."
   [^java.io.File file]
   (let [len (.length file)]

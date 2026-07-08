@@ -117,7 +117,8 @@
       (persistent! acc))))
 
 (defn embed-documents
-  "Embed chunk texts for *storage* (indexing side), applying the document prompt
+  "title:str, texts:[str], cancelled?:(->bool) -> [float-array]
+  Embed chunk texts for *storage* (indexing side), applying the document prompt
   with `title` (the source file name) so the vectors carry a little document
   context. `cancelled?` (default never) is polled between batches so an in-progress
   file can be abandoned when the client disconnects. Returns a vector of
@@ -127,7 +128,8 @@
    (embed-prepared (map #(document-prompt title %) texts) cancelled?)))
 
 (defn embed-query
-  "Embed a single search string for *retrieval*, applying the query prompt.
+  "str -> float-array
+  Embed a single search string for *retrieval*, applying the query prompt.
   Returns one float-array."
   ^floats [text]
   (first (embed-prepared [(str query-prompt text)] (constantly false))))
@@ -154,7 +156,8 @@
         (:model_info (ollama-show model))))
 
 (defn model-spec
-  "A stable identity for the *currently configured* embedding model, stored on each
+  "-> str
+  A stable identity for the *currently configured* embedding model, stored on each
   indexed chunk so a reindex can tell whether a chunk's vector still comes from the
   same model. Format:
     \"<model>@<digest>/<dim>d\"   e.g. \"embeddinggemma@85462619ee72/768d\"

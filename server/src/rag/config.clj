@@ -16,7 +16,8 @@
   (PosixFilePermissions/fromString "rwx------"))
 
 (defn ensure-dir!
-  "Create ~/.myrag if absent and lock it to the owner, re-tightening on every
+  "-> Path
+  Create ~/.myrag if absent and lock it to the owner, re-tightening on every
   boot. Everything inside (index/, *.pid, *.port, *.log) inherits the protection:
   with the parent unenterable by others, they can't reach the contents."
   []
