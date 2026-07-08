@@ -97,11 +97,48 @@ func resolveServerDir() (string, error) {
 	return "", errors.New("cannot locate the Clojure server; set MYRAG_SERVER_DIR to <repo>/server")
 }
 
+// ErrAlreadyRunning is returned by Start when a healthy server already exists.
+// Callers that only need to *ensure* a server is up (e.g. `myrag mcp`) should
+// treat it as success rather than a failure.
+var ErrAlreadyRunning = errors.New("server already running")
+
+// acquireStartLock takes an exclusive advisory lock on ~/.myrag/start.lock,
+// retrying until it is acquired or `timeout` elapses. The returned func releases
+// it. It serializes server startup across processes.
+func acquireStartLock(timeout time.Duration) (func(), error) {
+	path := filepath.Join(dir(), "start.lock")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		switch err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err {
+		case nil:
+			return func() {
+				_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+				_ = f.Close()
+			}, nil
+		case syscall.EWOULDBLOCK:
+			if time.Now().After(deadline) {
+				_ = f.Close()
+				return nil, errors.New("timed out waiting for another process to finish starting the server")
+			}
+			time.Sleep(100 * time.Millisecond)
+		default:
+			_ = f.Close()
+			return nil, fmt.Errorf("locking %s: %w", path, err)
+		}
+	}
+}
+
 // Start spawns the server (if not already healthy) and blocks until it answers
-// /health or the timeout elapses.
+// /health or the timeout elapses. It is safe to call concurrently from multiple
+// processes: startup is serialized on a file lock so exactly one server is
+// spawned, and the losers observe that server and return ErrAlreadyRunning.
 func Start(timeout time.Duration) error {
 	if IsHealthy() {
-		return errors.New("server already running")
+		return ErrAlreadyRunning
 	}
 	srvDir, err := resolveServerDir()
 	if err != nil {
@@ -113,6 +150,23 @@ func Start(timeout time.Duration) error {
 	// Lock ~/.myrag to the owner, tightening it even if it pre-existed with
 	// looser bits (MkdirAll won't chmod an existing dir).
 	_ = os.Chmod(dir(), 0o700)
+
+	// Serialize startup across processes. Without this, several cold `myrag mcp`
+	// launches — an LLM host opening multiple sessions, or the MCP Inspector
+	// reconnecting — each see "not healthy" during the ~10-40s JVM boot and spawn
+	// their own server; the duplicates then collide on Lucene's single-writer
+	// index lock. Holding this lock across the whole boot makes them queue.
+	unlock, err := acquireStartLock(timeout)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	// A racer may have won the lock and finished booting while we waited on it.
+	if IsHealthy() {
+		return ErrAlreadyRunning
+	}
+
 	// Drop any stale port file so we don't race against an old value.
 	_ = os.Remove(PortFile())
 

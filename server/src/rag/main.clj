@@ -29,6 +29,12 @@
   index and removes the port files, then block on the server."
   [& _args]
   (config/ensure-dir!)
+  ;; Open the Lucene index eagerly (it's otherwise opened lazily on first query).
+  ;; This acquires the single-writer index lock at boot, so a duplicate server —
+  ;; one started outside the client's startup lock — fails fast here instead of
+  ;; coming up "healthy" and only erroring on the first query that touches the
+  ;; index. The client (lifecycle.Start) then reports it as a startup crash.
+  (index/ensure!)
   (let [nrepl-srv (let [srv (nrepl-server/start-server
                              :port config/nrepl-port
                              :handler cider-nrepl-handler)
