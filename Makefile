@@ -1,9 +1,16 @@
-.PHONY: build client check-server server-deps run stop status test test-client test-server clean clear-index
+.PHONY: build client install check-server server-deps run stop status test test-client test-server clean clear-index
+
+INSTALL_DIR ?= $(HOME)/.local/bin
 
 build: client ## Build the Go client into bin/myrag
 
 client: ## Compile the Go CLI
 	go build -C client -o ../bin/myrag .
+
+install: build ## Install the client binary to ~/.local/bin (override with INSTALL_DIR=)
+	@mkdir -p $(INSTALL_DIR)
+	cp bin/myrag $(INSTALL_DIR)/myrag
+	@echo "installed $(INSTALL_DIR)/myrag"
 
 check-server: ## Compile-check every server namespace (no boot, no artifact)
 	cd server && clojure -M:check -e "(run! require '[rag.config rag.main rag.http rag.index rag.embed rag.index.walker rag.index.extractor rag.index.segmenter rag.index.chunker rag.index.lucene rag.query.hybrid]) (println \"server namespaces compiled OK\")"

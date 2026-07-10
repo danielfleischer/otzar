@@ -11,11 +11,11 @@
 (def ^:const rrf-k
   "RRF damping constant. Larger values flatten the contribution of top ranks
   (project plan §6 uses 60). Tune here."
-  60)
+  40)
 
 (def ^:const vector-weight
   "Vector scores weight."
-  1.5)
+  1.3)
 
 (defn fuse
   "keyword-hits:[hit], vector-hits:[hit], k:int -> [hit]

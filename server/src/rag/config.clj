@@ -31,7 +31,7 @@
 
 (def embed-model
   "Ollama embedding model. Override with MYRAG_EMBED_MODEL."
-  (or (System/getenv "MYRAG_EMBED_MODEL") "embeddinggemma"))
+  (or (System/getenv "MYRAG_EMBED_MODEL") "bge-m3"))
 
 (def embed-timeout-s
   "Per-request timeout (seconds) for an Ollama embed call. Generous by default:

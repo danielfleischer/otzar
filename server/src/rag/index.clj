@@ -83,7 +83,7 @@
                              (on-progress {:type "file-start" :path path :total (count chunks)}))
                   on-batch (fn [done total]
                              (on-progress {:type "chunk" :path path :done done :total total}))
-                  vecs     (embed/embed-documents (.getName f) (map :text chunks) cancelled? on-batch)]
+                  vecs     (embed/embed-documents (map :text chunks) cancelled? on-batch)]
               (mapv (fn [{:keys [chunk_idx text]} embedding]
                       {:id           (str doc-id ":" chunk_idx)
                        :doc_id       doc-id

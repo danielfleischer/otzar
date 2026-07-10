@@ -11,7 +11,7 @@
 
   Vectors come back as float-arrays so they drop straight into Lucene's
   KnnFloatVectorField (rag.index.lucene). The vector dimension is whatever the
-  model emits (embeddinggemma → 768); nothing here hardcodes it."
+  model emits (bge-m3 → 1024); nothing here hardcodes it."
   (:require [clojure.string :as str]
             [jsonista.core :as j]
             [rag.config :as config])
@@ -38,8 +38,8 @@
 
   NB: against Ollama this currently yields *no* speedup — Ollama loads embedding
   models single-slot (llama-server `-np 1`) regardless of OLLAMA_NUM_PARALLEL, so
-  concurrent embed requests serialize server-side, and embeddinggemma is compute-
-  bound anyway (~120 vec/s here). The concurrency is kept for a future backend that
+  concurrent embed requests serialize server-side, and the embedding model is
+  compute-bound anyway. The concurrency is kept for a future backend that
   serves embeddings with real parallelism (multiple slots, an in-process DJL/ONNX
   batcher, or sharded Ollama). Today's real levers are a faster model or fewer/
   larger chunks, not request concurrency."
@@ -103,17 +103,10 @@
 (defn- ->floats ^floats [row]
   (float-array (map float row)))
 
-;; EmbeddingGemma is trained with asymmetric task prompts — the *same* text must
-;; be embedded differently as a stored document vs. a search query, or the two
-;; vector spaces don't line up. Formats are verbatim from the model card:
-;; https://ai.google.dev/gemma/docs/embeddinggemma/model_card#prompt-instructions
-;; (embeddinggemma-specific; revisit these if MYRAG_EMBED_MODEL changes.)
-(def ^:private query-prompt "task: search result | query: ")
-
-(defn- document-prompt
-  "EmbeddingGemma's document prompt, using the source file name as the title slot."
-  [title text]
-  (str "title: " title " | text: " text))
+;; bge-m3 is symmetric — documents and queries are embedded as raw text, no task
+;; prompts. (Some models, e.g. EmbeddingGemma, need asymmetric document/query
+;; prompts for the two vector spaces to line up; if MYRAG_EMBED_MODEL changes to
+;; such a model, reintroduce per-side prompting in embed-documents/embed-query.)
 
 (defn- embed-prepared
   "Embed a seq of already-prompt-prefixed strings, split into requests of at most
@@ -165,24 +158,21 @@
         (throw (or (.getCause e) e))))))           ; surface the batch's own ex-info
 
 (defn embed-documents
-  "title:str, texts:[str], cancelled?:(->bool), on-batch:(fn[n]) -> [float-array]
-  Embed chunk texts for *storage* (indexing side), applying the document prompt
-  with `title` (the source file name) so the vectors carry a little document
-  context. `cancelled?` (default never) is polled between batches so an in-progress
-  file can be abandoned when the client disconnects. `on-batch` (default no-op) is
-  called [done total] after each batch for chunk-level progress. Returns a vector
-  of float-arrays, one per input, in order."
-  ([title texts] (embed-documents title texts (constantly false) (fn [_ _])))
-  ([title texts cancelled?] (embed-documents title texts cancelled? (fn [_ _])))
-  ([title texts cancelled? on-batch]
-   (embed-prepared (map #(document-prompt title %) texts) cancelled? on-batch)))
+  "texts:[str], cancelled?:(->bool), on-batch:(fn[done total]) -> [float-array]
+  Embed chunk texts for *storage* (indexing side). `cancelled?` (default never) is
+  polled between batches so an in-progress file can be abandoned when the client
+  disconnects. `on-batch` (default no-op) is called [done total] after each batch
+  for chunk-level progress. Returns a vector of float-arrays, one per input, in order."
+  ([texts] (embed-documents texts (constantly false) (fn [_ _])))
+  ([texts cancelled?] (embed-documents texts cancelled? (fn [_ _])))
+  ([texts cancelled? on-batch]
+   (embed-prepared texts cancelled? on-batch)))
 
 (defn embed-query
   "str -> float-array
-  Embed a single search string for *retrieval*, applying the query prompt.
-  Returns one float-array."
+  Embed a single search string for *retrieval*. Returns one float-array."
   ^floats [text]
-  (first (embed-prepared [(str query-prompt text)] (constantly false) (fn [_ _]))))
+  (first (embed-prepared [text] (constantly false) (fn [_ _]))))
 
 (defn- tag-digest
   "First 12 hex of Ollama's manifest sha256 for `tag`, from /api/tags, or nil.
@@ -210,7 +200,7 @@
   A stable identity for the *currently configured* embedding model, stored on each
   indexed chunk so a reindex can tell whether a chunk's vector still comes from the
   same model. Format:
-    \"<model>@<digest>/<dim>d\"   e.g. \"embeddinggemma@85462619ee72/768d\"
+    \"<model>@<digest>/<dim>d\"   e.g. \"bge-m3@85462619ee72/1024d\"
   <digest> is the Ollama manifest hash (the real version — survives a rename, bumps
   on a re-pull), <dim> the embedding dimension (a change here means the whole Lucene
   vector field must be rebuilt, not just re-embedded). Any part Ollama won't report

@@ -25,7 +25,7 @@
      :chunk_idx 7                         ; int, position within the source doc
      :text      \"...chunk text...\"
      :content_sha1 \"e3b0c4...\"           ; sha1 of the source text (reindex gate)
-     :model_spec \"embeddinggemma@85462619ee72/768d\"} ; embedding-model identity (reindex invalidation)
+     :model_spec \"bge-m3@85462619ee72/1024d\"} ; embedding-model identity (reindex invalidation)
 
   Field mapping (docs/rag-project-plan.md §4.1 — the M1 subset):
     id        StringField        stored, indexed (not analyzed)
