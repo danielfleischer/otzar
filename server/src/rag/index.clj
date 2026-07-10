@@ -16,9 +16,16 @@
             [rag.query.hybrid :as hybrid])
   (:import [java.security MessageDigest]
            [java.time Instant LocalDate ZoneOffset]
-           [java.util.concurrent Executors Future]))
+           [java.util.concurrent ExecutorCompletionService Executors Future]))
 
 (defonce ^:private component (atom nil))
+
+(def ^:private commit-interval-ms
+  "Commit the index at least this often during a long run so files that finish
+  while a big file is still embedding become durable promptly and survive an
+  interrupt. A commit fsyncs, so this trades a little throughput for a small
+  worst-case loss window; per-file atomicity is unaffected."
+  5000)
 
 (defn- open? [] (some? @component))
 
@@ -110,19 +117,27 @@
   Walk `paths`, extract + chunk + embed each file, and add all chunks to the
   index. The change-check + extract+embed work runs through a bounded pool of
   `config/index-concurrency` workers (it is Ollama-bound and parallelizes well);
-  results are drained on this thread — in file-submission order — and written
-  through the single, thread-safe IndexWriter, with one commit at the end.
-  At most `index-concurrency` files are in flight, so memory stays bounded.
-  Files whose content is unchanged since the last index are skipped without
-  re-embedding (see file->chunks), counted under :unchanged.
+  results are drained on this thread in *completion order* (via an
+  ExecutorCompletionService) and written through the single, thread-safe
+  IndexWriter. Draining in completion order — not submission order — is what keeps
+  a small file that finishes from waiting behind a slow big file submitted ahead of
+  it; each file's chunks are added as soon as that file finishes. The writer is
+  committed every ~commit-interval-ms (and once at the end), so files that finish
+  while a large file is still embedding become durable promptly and survive an
+  interrupt, rather than being lost together with the uncommitted big file. At most
+  `index-concurrency` files are in flight, so memory stays bounded. Files whose
+  content is unchanged since the last index are skipped without re-embedding (see
+  file->chunks), counted under :unchanged.
 
   The 3-arg form takes a no-arg `cancelled?` predicate, polled both here (per
   file) and inside the embedder (between batches, via file->chunks). Once it turns
-  true the index is *cancelled*: no more files are submitted, in-flight embeds are
-  interrupted, the work done so far is committed, and the result comes back with
-  :cancelled true. rag.http drives it from a heartbeat write so a disconnected
-  client stops the indexing — and, because it reaches into the embed batches, the
-  Ollama work in flight is bounded to the current batch rather than a whole file.
+  true the index is *cancelled*: no more files are submitted and in-flight embeds
+  are interrupted, but every file that had already finished is folded in and
+  committed first (including any waiting in the completion queue), so completed work
+  is kept; the result comes back with :cancelled true. rag.http drives it from a
+  heartbeat write so a disconnected client stops the indexing — and, because it
+  reaches into the embed batches, the Ollama work in flight is bounded to the
+  current batch rather than a whole file.
   Returns {:indexed <files> :chunks <n> :skipped :unchanged :errors [{:path ..}]}.
 
   `on-progress` (optional, default no-op) is called with plain event maps as work
@@ -142,48 +157,67 @@
          spec   (embed/model-spec)  ; one Ollama metadata probe per run; stamped on every chunk
          files  (distinct (mapcat #(walker/walk % {:recursive recursive}) paths))
          _      (on-progress {:type "start" :total (count files)})
+         n-files (count files)
          pool   (Executors/newFixedThreadPool config/index-concurrency)
+         ecs    (ExecutorCompletionService. pool)  ; hands back futures in completion order
          submit (fn [^java.io.File f]
-                  (.submit pool ^Callable (fn [] (embed-file-result idx spec f cancelled? on-progress))))
-         finish (fn [indexed chunks skipped unchanged errors cancelled]
+                  (.submit ecs ^Callable (fn [] (embed-file-result idx spec f cancelled? on-progress))))
+         ;; Fold one file's result into the running counters, writing its chunks to
+         ;; the index (as one atomic block). Returns [[indexed chunks skipped
+         ;; unchanged errors] status fchunks] — status/fchunks feed the progress UI.
+         process (fn [[indexed chunks skipped unchanged errors]
+                      {:keys [^java.io.File file error] unchg :unchanged cs :chunks}]
+                   (cond
+                     error    [[indexed chunks skipped unchanged
+                                (conj errors {:path (.getAbsolutePath file) :error error})]
+                               "error" 0]
+                     unchg    [[indexed chunks skipped (inc unchanged) errors] "unchanged" 0]
+                     (seq cs) (do (lucene/add-chunks! idx cs)
+                                  [[(inc indexed) (+ chunks (count cs)) skipped unchanged errors]
+                                   "indexed" (count cs)])
+                     :else    [[indexed chunks (inc skipped) unchanged errors] "skipped" 0]))
+         finish (fn [[indexed chunks skipped unchanged errors] cancelled]
                   (lucene/commit! idx)
                   (cond-> {:indexed indexed :chunks chunks :skipped skipped
                            :unchanged unchanged :errors errors}
                     cancelled (assoc :cancelled true)))]
      (try
-       (loop [in-flight (into clojure.lang.PersistentQueue/EMPTY
-                             (map submit (take config/index-concurrency files)))
-              pending   (drop config/index-concurrency files)
-              indexed 0, chunks 0, skipped 0, unchanged 0, errors []]
-         (if-let [fut (peek in-flight)]
-           (let [result (.get ^Future fut)]  ; wait for the oldest file (worker self-cancels if flagged)
+       (run! submit (take config/index-concurrency files))
+       (loop [pending     (drop config/index-concurrency files)
+              taken       0
+              counters    [0 0 0 0 []]     ; indexed chunks skipped unchanged errors
+              dirty?      false            ; chunks added since the last commit
+              last-commit (System/currentTimeMillis)]
+         (if (= taken n-files)
+           (finish counters false)
+           (let [result (.get ^Future (.take ecs))]  ; the next file to *finish*, any order
              (if (cancelled?)
-               ;; client gone: drop this result, stop submitting, interrupt the
-               ;; rest, keep what's already committed.
-               (do (.shutdownNow pool)
-                   (finish indexed chunks skipped unchanged errors true))
-               (let [{:keys [^java.io.File file error] unchg :unchanged cs :chunks} result
-                     ;; keep the window full: as each result lands, submit the next
-                     in-flight (cond-> (pop in-flight)
-                                 (seq pending) (conj (submit (first pending))))
-                     pending   (if (seq pending) (rest pending) pending)
-                     [indexed chunks skipped unchanged errors status fchunks]
-                     (cond
-                       error    [indexed chunks skipped unchanged
-                                 (conj errors {:path (.getAbsolutePath file) :error error})
-                                 "error" 0]
-                       unchg    [indexed chunks skipped (inc unchanged) errors "unchanged" 0]
-                       (seq cs) (do (lucene/add-chunks! idx cs)
-                                    [(inc indexed) (+ chunks (count cs)) skipped unchanged errors
-                                     "indexed" (count cs)])
-                       :else    [indexed chunks (inc skipped) unchanged errors "skipped" 0])]
+               ;; Client gone: stop submitting and interrupt in-flight embeds, but
+               ;; first fold in this result and every file already sitting finished
+               ;; in the completion queue, then commit — so completed work is kept.
+               (let [counters (loop [c (first (process counters result))]
+                                (if-let [f (.poll ecs)]
+                                  (recur (first (process c (.get ^Future f))))
+                                  c))]
+                 (.shutdownNow pool)
+                 (finish counters true))
+               (let [_ (when (seq pending) (submit (first pending)))  ; keep the window full
+                     pending (if (seq pending) (rest pending) pending)
+                     [counters status fchunks] (process counters result)
+                     [indexed chunks skipped unchanged errors] counters
+                     ;; Commit periodically so finished files are durable before any
+                     ;; interrupt, without an fsync per file.
+                     dirty? (or dirty? (= status "indexed"))
+                     now    (System/currentTimeMillis)
+                     [dirty? last-commit] (if (and dirty? (>= (- now last-commit) commit-interval-ms))
+                                            (do (lucene/commit! idx) [false now])
+                                            [dirty? last-commit])]
                  (on-progress {:type "file"
                                :done (+ indexed unchanged skipped (count errors))
-                               :path (.getAbsolutePath file)
+                               :path (.getAbsolutePath ^java.io.File (:file result))
                                :status status
                                :chunks fchunks})
-                 (recur in-flight pending indexed chunks skipped unchanged errors))))
-           (finish indexed chunks skipped unchanged errors false)))
+                 (recur pending (inc taken) counters dirty? last-commit))))))
        (finally (.shutdown pool))))))
 
 (defn- ->epoch-ms
