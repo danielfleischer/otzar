@@ -8,14 +8,25 @@
   org.apache.lucene/lucene-analysis-common {:mvn/version "10.5.0"}
   org.apache.lucene/lucene-queryparser     {:mvn/version "10.5.0"}}
  :aliases
- {:run  {:extra-deps {nrepl/nrepl          {:mvn/version "1.7.0"}
-                      cider/cider-nrepl    {:mvn/version "0.61.0"}}
+ ;; Production boot. No nREPL/CIDER here: rag.main loads them dynamically only
+ ;; when enabled (see :dev), so a plain `-M:run` neither puts them on the
+ ;; classpath nor pays their ~thousands-of-classes memory. The JVM is capped for
+ ;; a single-user local daemon: SerialGC (one GC thread, smallest native/thread
+ ;; overhead) and a 512m ceiling — ample over the ~95m idle live set, with room
+ ;; for indexing/HNSW-merge spikes — and it exits (rather than thrashes) on OOM
+ ;; so the client reports a clean crash.
+ {:run  {:jvm-opts  ["-Xms64m" "-Xmx512m" "-XX:+UseSerialGC" "-XX:+ExitOnOutOfMemoryError"]
          :main-opts ["-m" "rag.main"]}
-  ;; Compile-only classpath: nrepl on the path (rag.main requires it) but no
-  ;; :main-opts, so `make check-server` can load every ns without booting the
-  ;; server the way :run would.
-  :check {:extra-deps {nrepl/nrepl        {:mvn/version "1.7.0"}
-                       cider/cider-nrepl  {:mvn/version "0.61.0"}}}
+  ;; Live-coding: puts nREPL + CIDER on the classpath and flips them on
+  ;; (-Dmyrag.nrepl=true) so rag.main starts the loopback nREPL. Layer over :run
+  ;; to boot a dev server CIDER can attach to: `clojure -M:dev:run`.
+  :dev  {:extra-deps {nrepl/nrepl       {:mvn/version "1.7.0"}
+                      cider/cider-nrepl {:mvn/version "0.61.0"}}
+         :jvm-opts   ["-Dmyrag.nrepl=true"]}
+  ;; Compile-only classpath: no :main-opts, so `make check-server` can load every
+  ;; ns without booting the server. rag.main no longer statically requires nREPL,
+  ;; so nothing extra is needed to compile it.
+  :check {}
   :test {:extra-paths ["test"]
          :extra-deps  {io.github.cognitect-labs/test-runner
                        {:git/sha "3f288f1f16d167723ad87cc35b1dfee3c1681e10"}}

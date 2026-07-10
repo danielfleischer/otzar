@@ -46,6 +46,14 @@
   with MYRAG_EMBED_BATCH."
   (int (or (some-> (System/getenv "MYRAG_EMBED_BATCH") Long/parseLong) 64)))
 
+(def nrepl-enabled?
+  "Whether to start the in-server nREPL for live coding (CIDER attach). Off by
+  default so a production `clojure -M:run` never loads the nREPL/CIDER stack; the
+  :dev alias turns it on (-Dmyrag.nrepl=true) *and* puts the deps on the
+  classpath. Also honored via MYRAG_NREPL=1 for an ad-hoc dev boot."
+  (boolean (or (= "true" (System/getProperty "myrag.nrepl"))
+               (contains? #{"1" "true"} (System/getenv "MYRAG_NREPL")))))
+
 (def nrepl-port
   "TCP port for the in-server nREPL (loopback only) that CIDER attaches to; 0
   picks a free port, published to .nrepl-port for auto-discovery. Override with

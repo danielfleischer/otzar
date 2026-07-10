@@ -31,8 +31,8 @@ and is left running when the host disconnects (stop it explicitly with
 		// processes and returns ErrAlreadyRunning when one is already healthy —
 		// for us that's success, not a failure. stdout is the JSON-RPC channel, so
 		// lifecycle logging must not go there — Start logs to a file. 60s matches
-		// `myrag start`: a cold JVM boot (Lucene + cider-nrepl) can take a while,
-		// and the host is still waiting on us for the handshake.
+		// `myrag start`: a cold JVM boot (Lucene) can take a while, and the host
+		// is still waiting on us for the handshake.
 		if err := lifecycle.Start(60 * time.Second); err != nil && !errors.Is(err, lifecycle.ErrAlreadyRunning) {
 			return err
 		}
