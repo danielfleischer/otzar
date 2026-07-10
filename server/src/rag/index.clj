@@ -302,6 +302,29 @@
           (cond-> (-> info (dissoc :content_sha1) (assoc :text text))
             (not= content_sha1 (sha1 text)) (assoc :stale true)))))))
 
+(defn prune!
+  "{:dry-run bool}? -> {:removed [str], :kept int, :dry_run bool?}
+  Reconcile the index against disk: find every indexed source file whose path no
+  longer exists (orphans left by a delete or rename) and drop all of its chunks,
+  then reclaim them so the counts stay honest (lucene/reclaim-deletes!). With
+  {:dry-run true} it reports what *would* go without touching the index.
+    :removed  the orphaned paths, sorted (as lucene/paths returns them)
+    :kept     how many indexed files remain
+    :dry_run  present and true only for a dry run
+  Detection is disk-existence only: a moved file shows up as an orphan at its old
+  path (and, once you reindex the new location, as a fresh file there). Runs on the
+  caller's thread; no embedding, just a stat() per indexed file."
+  ([] (prune! {}))
+  ([{:keys [dry-run]}]
+   (let [idx     (ensure!)
+         indexed (lucene/paths idx)
+         orphans (filterv #(not (.exists (io/file ^String %))) indexed)]
+     (when (and (seq orphans) (not dry-run))
+       (lucene/delete-by-paths! idx orphans)
+       (lucene/reclaim-deletes! idx))
+     (cond-> {:removed orphans :kept (- (count indexed) (count orphans))}
+       dry-run (assoc :dry_run true)))))
+
 (defn stats
   "-> {:num_docs int, :num_chunks int}
   Index counts, or zeros if nothing has opened the index yet."

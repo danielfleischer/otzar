@@ -1,6 +1,7 @@
 (ns rag.http
-  "Ring/reitit handlers: /health, /stats, /index, /query, /document/:id, /shutdown.
-  Deletion verbs (DELETE /index, /reindex) are unscheduled — see docs/api.md."
+  "Ring/reitit handlers: /health, /stats, /paths, /index, /prune, /query,
+  /document/:id, /shutdown. /prune is the only deletion verb — it drops chunks for
+  source files gone from disk. DELETE /index, /reindex remain unscheduled (docs/api.md)."
   (:require [reitit.ring :as ring]
             [ring.core.protocols :as rcp]
             [jsonista.core :as j]
@@ -100,6 +101,15 @@
                        {:type "result" :result result}))
                (.close out)))))})))
 
+(defn- prune-handler
+  "POST /prune — reconcile the index against disk, dropping chunks for source files
+  that no longer exist (orphans from deletes/renames). Optional body
+  {\"dry_run\": true} previews the orphans without deleting. Returns
+  {:removed [path] :kept n [:dry_run true]} (see index/prune!)."
+  [req]
+  (let [{:keys [dry_run]} (read-body req)]
+    (json 200 (index/prune! {:dry-run dry_run}))))
+
 (defn- query-handler [req]
   (let [{:keys [q k mode filters fusion] :or {k 10 mode "hybrid"}} (read-body req)]
     (if (str/blank? q)
@@ -134,6 +144,7 @@
      ["/stats"    {:get  (with-errors stats)}]
      ["/paths"    {:get  (with-errors paths)}]
      ["/index"    {:post (with-errors index-handler)}]
+     ["/prune"    {:post (with-errors prune-handler)}]
      ["/query"    {:post (with-errors query-handler)}]
      ["/document/:id" {:get (with-errors document-handler)}]
      ["/shutdown" {:post shutdown}]])

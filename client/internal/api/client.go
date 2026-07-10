@@ -141,6 +141,16 @@ func (c *Client) IndexStream(req IndexRequest, onEvent func(IndexEvent)) (*Index
 	return result, nil
 }
 
+// Prune posts to /prune to drop chunks for source files that no longer exist on
+// disk (orphans from deletes/renames). With dryRun it only reports what would go.
+func (c *Client) Prune(dryRun bool) (*PruneResult, error) {
+	var r PruneResult
+	if err := c.postJSON("/prune", PruneRequest{DryRun: dryRun}, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
 // Query posts to /query and returns the ranked hits.
 func (c *Client) Query(req QueryRequest) (*QueryResult, error) {
 	var r QueryResult

@@ -50,9 +50,10 @@
   - The query string is escaped before parsing so natural-language queries (with
     `?`, `*`, etc.) match literally instead of being read as wildcard syntax.
   - Reindex-by-doc_id works: add-chunks! replaces a file's chunks atomically
-    (updateDocuments keyed on doc_id). Standalone deletion (removing a doc without
-    re-adding) is not implemented — orphaned chunks from a deleted source file
-    persist until that file is reindexed (todo.org #8)."
+    (updateDocuments keyed on doc_id). Standalone deletion is delete-by-paths!,
+    which the prune path uses to drop chunks for source files removed/renamed on
+    disk (todo.org #8); reclaim-deletes! then expunges them so the term-dictionary
+    reads (paths, stats) stop counting the removed files."
   (:import [org.apache.lucene.store FSDirectory]
            [org.apache.lucene.index IndexWriter IndexWriterConfig MultiTerms Term
             VectorSimilarityFunction]
@@ -113,6 +114,31 @@
   [{:keys [^IndexWriter writer]} chunks]
   (doseq [[doc-id group] (group-by :doc_id chunks)]
     (.updateDocuments writer (Term. "doc_id" ^String doc-id) (map chunk->doc group))))
+
+(defn delete-by-paths!
+  "component, paths:[str] -> nil
+  Delete every chunk whose stored `path` is in `paths` — orphan cleanup for source
+  files removed or renamed on disk. One deleteDocuments call removes docs matching
+  ANY of the path terms. Does not commit and does not reclaim the deleted docs (see
+  reclaim-deletes!); no-op on an empty seq."
+  [{:keys [^IndexWriter writer]} paths]
+  (when (seq paths)
+    (.deleteDocuments writer
+                      ^"[Lorg.apache.lucene.index.Term;"
+                      (into-array Term (map #(Term. "path" ^String %) paths)))))
+
+(defn reclaim-deletes!
+  "component -> nil
+  Physically expunge documents already marked deleted, then commit and refresh.
+  Needed after delete-by-paths! because `paths` and stats/:num_docs read the term
+  dictionary, which keeps a deleted doc's terms until its segment is rewritten —
+  so without this a pruned file would linger in list_indexed_paths until the next
+  natural merge. forceMergeDeletes rewrites every segment that has deletes, so this
+  is an occasional-maintenance cost (the prune path), not something for a hot path."
+  [{:keys [^IndexWriter writer ^SearcherManager manager]}]
+  (.forceMergeDeletes writer true)
+  (.commit writer)
+  (.maybeRefreshBlocking manager))
 
 (defn commit!
   "component -> nil

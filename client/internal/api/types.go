@@ -58,6 +58,21 @@ type IndexError struct {
 	Error string `json:"error"`
 }
 
+// PruneRequest is the body of POST /prune. DryRun previews the orphans without
+// deleting anything.
+type PruneRequest struct {
+	DryRun bool `json:"dry_run,omitempty"`
+}
+
+// PruneResult is the body returned by POST /prune: the orphaned source files
+// dropped from the index (or, in a dry run, the ones that would be) and how many
+// indexed files remain.
+type PruneResult struct {
+	Removed []string `json:"removed"`
+	Kept    int      `json:"kept"`
+	DryRun  bool     `json:"dry_run,omitempty"`
+}
+
 // QueryRequest is the body of POST /query.
 type QueryRequest struct {
 	Q       string         `json:"q"`
