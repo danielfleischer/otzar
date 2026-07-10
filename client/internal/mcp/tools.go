@@ -24,14 +24,18 @@ type SearchInput struct {
 }
 
 // SearchHit is one hit, trimmed to what an LLM needs: the id to fetch the full
-// text with get_document, the source path to cite, the fused score, and the chunk
-// text itself.
+// text with get_document, the source path to cite, the 1-based source line range
+// to cite (path:line), the fused score, and the chunk text itself. LineStart/
+// LineEnd are omitted for chunks without source lines (older index, or non-text
+// extracts) so the model never cites a fabricated range.
 type SearchHit struct {
-	ID       string  `json:"id"`
-	Path     string  `json:"path"`
-	Score    float64 `json:"score"`
-	ChunkIdx int     `json:"chunk_idx"`
-	Text     string  `json:"text"`
+	ID        string  `json:"id"`
+	Path      string  `json:"path"`
+	LineStart int     `json:"line_start,omitempty"`
+	LineEnd   int     `json:"line_end,omitempty"`
+	Score     float64 `json:"score"`
+	ChunkIdx  int     `json:"chunk_idx"`
+	Text      string  `json:"text"`
 }
 
 type SearchOutput struct {
@@ -50,9 +54,12 @@ func addSearch(s *mcpsdk.Server, c *api.Client) {
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name: "search",
 		Description: "Hybrid keyword+vector search over the user's local document index. " +
-			"Returns ranked text chunks, each with its source file path and an id you can " +
-			"pass to get_document to read the full file. Use this to find where something is " +
-			"discussed before answering questions about the user's documents or code.",
+			"Returns ranked text chunks, each with its source file path, the 1-based line " +
+			"range (line_start/line_end) the chunk spans so you can cite it as path:Lstart-Lend, " +
+			"and an id you can pass to get_document to read the full file. The line range is " +
+			"omitted for some files (e.g. PDFs) — don't invent one when it's absent. Use this " +
+			"to find where something is discussed before answering questions about the user's " +
+			"documents or code.",
 	}, func(_ context.Context, _ *mcpsdk.CallToolRequest, in SearchInput) (*mcpsdk.CallToolResult, SearchOutput, error) {
 		req := api.QueryRequest{Q: in.Q, K: in.K, Mode: in.Mode}
 		filters := map[string]any{}
@@ -75,7 +82,8 @@ func addSearch(s *mcpsdk.Server, c *api.Client) {
 		out := SearchOutput{Hits: make([]SearchHit, 0, len(res.Hits))}
 		for _, h := range res.Hits {
 			out.Hits = append(out.Hits, SearchHit{
-				ID: h.ID, Path: h.Path, Score: h.Score, ChunkIdx: h.ChunkIdx, Text: h.Text,
+				ID: h.ID, Path: h.Path, LineStart: h.LineStart, LineEnd: h.LineEnd,
+				Score: h.Score, ChunkIdx: h.ChunkIdx, Text: h.Text,
 			})
 		}
 		return nil, out, nil

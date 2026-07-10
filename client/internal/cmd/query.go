@@ -69,13 +69,27 @@ keyword (BM25), vector (kNN over embeddings), or hybrid (RRF fusion of both).
 			rows = append(rows, []string{
 				fmt.Sprintf("%d", i+1),
 				fmt.Sprintf("%.3f", h.Score),
-				h.Path,
+				location(h),
 				snippet(h.Text),
 			})
 		}
 		render.Table([]string{"#", "score", "path", "snippet"}, rows)
 		return nil
 	},
+}
+
+// location renders a hit's source as path:line for citation — "file.md:42-47", or
+// "file.md:42" for a single line. Falls back to the bare path when the chunk has
+// no line range (older index, or an extractor without source lines).
+func location(h api.Hit) string {
+	switch {
+	case h.LineStart == 0:
+		return h.Path
+	case h.LineEnd > h.LineStart:
+		return fmt.Sprintf("%s:%d-%d", h.Path, h.LineStart, h.LineEnd)
+	default:
+		return fmt.Sprintf("%s:%d", h.Path, h.LineStart)
+	}
 }
 
 // snippet collapses a chunk to a single truncated line for table display.

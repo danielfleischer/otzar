@@ -35,17 +35,29 @@
           (recur end (if (str/blank? s) acc (conj! acc s))))))))
 
 (defn segment
-  "str -> [str]
-  Split `text` into a vector of sentence strings, in order. Each sentence is
-  trimmed and empty results dropped; blank/nil input yields an empty vector.
+  "str -> [{:text str, :line int}]
+  Split `text` into a vector of sentence maps, in order — each {:text <sentence>
+  :line <1-based source line>}. Sentences are trimmed and empty results dropped;
+  blank/nil input yields an empty vector.
 
   Splits on every line break first (a lone newline is a hard boundary), then
   applies locale-neutral (ROOT) Unicode sentence rules within each line — so it
   works across scripts and never lets a run of un-punctuated lines collapse into
   one oversized sentence. A single BreakIterator is reused across lines (safe:
-  each line is fully segmented before the next .setText)."
+  each line is fully segmented before the next .setText).
+
+  :line is the source line the sentence sits on, defined by that same split on
+  `\\R` (so a `\\r\\n` counts once): the Nth `\\R`-delimited line is line N (1-based).
+  Every sentence from a line carries that line's number; the chunker folds these
+  into a per-chunk [:line_start :line_end] range for `path:line` citation. This is
+  faithful only while the extracted text is the file's bytes (plain-text/source
+  files) — it does not survive a reconstructing extractor (PDF/HTML)."
   [text]
   (if (str/blank? text)
     []
     (let [bi (BreakIterator/getSentenceInstance Locale/ROOT)]
-      (into [] (mapcat #(sentences-in bi %) (str/split text #"\R"))))))
+      (into []
+            (mapcat (fn [i line]
+                      (map (fn [s] {:text s :line (inc i)}) (sentences-in bi line)))
+                    (range)
+                    (str/split text #"\R"))))))

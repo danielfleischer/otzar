@@ -10,8 +10,10 @@
    during a single large (10-min) file. Added =unchanged= to the summary.
 3. [X] ollama request timed out during long indexing sessions. Increased from 60 to 300, going to be solved later with
    parallel calls.
-4. [ ] return line number of relevant chunks. Not necessarily as part of the mcp. Design + feasibility written up in the
-   plan §13.7 (MCP-driven: 1-based line range, omitted for non-text extracts).
+4. [X] return line number of relevant chunks. Per plan §13.7: =segment= now returns ={:text :line}= per sentence, =pack=
+   folds each window into a 1-based =[:line_start :line_end]= span, stored as (nullable) Lucene fields and surfaced on
+   hits + get-chunk. Go: query table prints =path:Lstart-Lend=; MCP =search= carries the range and announces it. Omitted
+   (not null) for pre-line-tracking chunks and non-text extracts. Needs a reindex to populate existing docs.
 5. [X] CLI flags short version =-e= instead of =--ext=. Added short flags across =query= (-k -m -e -p -a -j) and -j on =index=.
 6. [ ] Adding CLI sub-verbs to make it nicer.
 7. [X] surface =score_breakdown= in the client. Added =ScoreBreakdown= (nullable keyword/vector) to the Go =Hit= struct so

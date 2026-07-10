@@ -23,6 +23,8 @@
      :ext       \"md\"                     ; may be nil
      :mtime     1712345678000             ; epoch millis (long)
      :chunk_idx 7                         ; int, position within the source doc
+     :line_start 42                       ; int, 1-based source line of the chunk (may be nil)
+     :line_end   47                       ; int, 1-based last source line (may be nil)
      :text      \"...chunk text...\"
      :content_sha1 \"e3b0c4...\"           ; sha1 of the source text (reindex gate)
      :model_spec \"bge-m3@85462619ee72/1024d\"} ; embedding-model identity (reindex invalidation)
@@ -34,6 +36,8 @@
     ext       StringField        stored, indexed (only when non-nil)
     mtime     LongPoint (range) + StoredField (retrieval) + NumericDocValues (sort)
     chunk_idx IntPoint (range)  + StoredField (retrieval)
+    line_start/line_end StoredField  stored only (source-line span for path:line citation;
+                                     only when non-nil — old docs and non-text extracts omit them)
     text      TextField          stored, indexed  ← the only analyzed field; BM25 here
     content_sha1 StoredField      stored only (retrieved by doc_id for reindex checks)
     model_spec   StoredField      stored only (embedding-model identity; reindex invalidation)
@@ -42,8 +46,11 @@
   Hit map (output of keyword-search) — best first
   ─────────────────────────────────────────────────────────────────────────────
     {:id \"a1b2:7\" :doc_id \"a1b2\" :path \"/abs/path\" :score 12.4
-     :text \"...\" :chunk_idx 7 :mtime 1712345678000}
+     :text \"...\" :chunk_idx 7 :mtime 1712345678000
+     :line_start 42 :line_end 47}
   Keys are serialized to JSON verbatim, so keep them exactly as above.
+  :line_start/:line_end are present only for chunks indexed with line tracking (a
+  reindex adds them); they are omitted — not null — for older chunks.
 
   Notes:
   - BM25 is Lucene's default similarity, so keyword-search scores are BM25.
@@ -75,7 +82,7 @@
         manager   (SearcherManager. writer (SearcherFactory.))]
     {:dir directory :analyzer analyzer :writer writer :manager manager}))
 
-(defn- chunk->doc ^Document [{:keys [id doc_id path ext mtime chunk_idx text embedding content_sha1 model_spec]}]
+(defn- chunk->doc ^Document [{:keys [id doc_id path ext mtime chunk_idx line_start line_end text embedding content_sha1 model_spec]}]
   (let [doc (Document.)]
     (.add doc (StringField. "id" id Field$Store/YES))
     (.add doc (StringField. "doc_id" doc_id Field$Store/YES))
@@ -87,6 +94,14 @@
     (.add doc (NumericDocValuesField. "mtime" (long mtime)))
     (.add doc (IntPoint. "chunk_idx" (int-array [chunk_idx])))
     (.add doc (StoredField. "chunk_idx" (int chunk_idx)))
+    ;; line_start/line_end give the chunk's 1-based source-line span for path:line
+    ;; citation (rag.index.chunker). Stored only — never queried, just returned on a
+    ;; hit. Nil for older chunks and for reconstructing extractors (PDF/HTML) whose
+    ;; text doesn't map to source lines, so we add them only when present.
+    (when line_start
+      (.add doc (StoredField. "line_start" (int line_start))))
+    (when line_end
+      (.add doc (StoredField. "line_end" (int line_end))))
     (.add doc (TextField. "text" text Field$Store/YES))
     ;; content_sha1 lets a reindex detect an unchanged file and skip re-embedding
     ;; (rag.index/file->chunks). Stored only — looked up by the indexed doc_id.
@@ -154,17 +169,29 @@
 (defn- ^long field-int [^Document doc ^String name]
   (.intValue (.numericValue (.getField doc name))))
 
+(defn- field-int? [^Document doc ^String name]
+  "Read an optional stored int field, or nil when the doc doesn't carry it (e.g.
+  line_start/line_end on chunks indexed before line tracking)."
+  (when-let [f (.getField doc name)]
+    (.intValue (.numericValue f))))
+
 (defn- ->hit
-  "Build a hit map from one ScoreDoc, pulling stored fields via `stored`."
+  "Build a hit map from one ScoreDoc, pulling stored fields via `stored`.
+  :line_start/:line_end are added only when the chunk carries them (so older
+  chunks stay clean rather than serializing nulls)."
   [stored ^org.apache.lucene.search.ScoreDoc sd]
-  (let [doc (.document stored (.doc sd))]
-    {:id        (.get doc "id")
-     :doc_id    (.get doc "doc_id")
-     :path      (.get doc "path")
-     :score     (.score sd)
-     :text      (.get doc "text")
-     :chunk_idx (field-int doc "chunk_idx")
-     :mtime     (field-long doc "mtime")}))
+  (let [doc (.document stored (.doc sd))
+        ls  (field-int? doc "line_start")
+        le  (field-int? doc "line_end")]
+    (cond-> {:id        (.get doc "id")
+             :doc_id    (.get doc "doc_id")
+             :path      (.get doc "path")
+             :score     (.score sd)
+             :text      (.get doc "text")
+             :chunk_idx (field-int doc "chunk_idx")
+             :mtime     (field-long doc "mtime")}
+      ls (assoc :line_start ls)
+      le (assoc :line_end le))))
 
 (defn- run-search
   "Acquire a searcher, run `query` for the top `k`, map results to hit maps, and
@@ -275,14 +302,18 @@
       (let [top (.search searcher (TermQuery. (Term. "id" ^String id)) (int 1))
             sds (.scoreDocs top)]
         (when (pos? (alength sds))
-          (let [doc (.document (.storedFields searcher) (.doc (aget sds 0)))]
-            {:id        (.get doc "id")
-             :doc_id    (.get doc "doc_id")
-             :path      (.get doc "path")
-             :ext       (.get doc "ext")
-             :mtime     (field-long doc "mtime")
-             :chunk_idx (field-int doc "chunk_idx")
-             :text      (.get doc "text")})))
+          (let [doc (.document (.storedFields searcher) (.doc (aget sds 0)))
+                ls  (field-int? doc "line_start")
+                le  (field-int? doc "line_end")]
+            (cond-> {:id        (.get doc "id")
+                     :doc_id    (.get doc "doc_id")
+                     :path      (.get doc "path")
+                     :ext       (.get doc "ext")
+                     :mtime     (field-long doc "mtime")
+                     :chunk_idx (field-int doc "chunk_idx")
+                     :text      (.get doc "text")}
+              ls (assoc :line_start ls)
+              le (assoc :line_end le)))))
       (finally
         (.release manager searcher)))))
 

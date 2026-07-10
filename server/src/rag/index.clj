@@ -60,17 +60,22 @@
   attached as :embedding; every chunk also carries :content_sha1 and :model_spec for
   next time. (A change in embedding *dimension* additionally requires a full reindex
   — clear-index — since Lucene stores one vector dimension per field.)
+  `force?` bypasses all of that: every file is re-extracted, re-chunked and
+  re-embedded even when nothing changed. It's the escape hatch for changes the
+  content/model gate can't see — a new chunker or a chunk-schema field (e.g. adding
+  :line_start/:line_end): the bytes and model are identical, so only an explicit
+  force re-populates existing docs.
   `cancelled?` is threaded into the embedder so a large file's embedding is
   abandoned promptly (between batches) when the client disconnects. `on-progress`
   receives this file's progress events: once {:type \"file-start\" :path :total
   <chunk count>} when embedding begins, then {:type \"chunk\" :path :done :total}
   per batch. Emitted from a worker thread, so `on-progress` must be thread-safe."
-  [component spec ^java.io.File f cancelled? on-progress]
+  [component spec ^java.io.File f cancelled? on-progress force?]
   (let [path      (.getAbsolutePath f)
         doc-id    (sha1 path)
         mtime     (.lastModified f)
         prior     (lucene/doc-meta component doc-id)
-        reusable? (and prior (= spec (:model_spec prior)))]
+        reusable? (and (not force?) prior (= spec (:model_spec prior)))]
     (if (and reusable? (= mtime (:mtime prior)))
       ::unchanged
       (when-let [text (extractor/extract f)]
@@ -84,13 +89,15 @@
                   on-batch (fn [done total]
                              (on-progress {:type "chunk" :path path :done done :total total}))
                   vecs     (embed/embed-documents (map :text chunks) cancelled? on-batch)]
-              (mapv (fn [{:keys [chunk_idx text]} embedding]
+              (mapv (fn [{:keys [chunk_idx text line_start line_end]} embedding]
                       {:id           (str doc-id ":" chunk_idx)
                        :doc_id       doc-id
                        :path         path
                        :ext          ext
                        :mtime        mtime
                        :chunk_idx    chunk_idx
+                       :line_start   line_start
+                       :line_end     line_end
                        :text         text
                        :content_sha1 csha
                        :model_spec   spec
@@ -104,9 +111,9 @@
     {:file f :unchanged true}   already indexed, identical content (nothing embedded)
     {:file f :chunks <seq>}     ok; empty/nil chunks means the extractor skipped it
     {:file f :error <msg>}      extract or embed threw (incl. a cancelled embed)"
-  [component spec ^java.io.File f cancelled? on-progress]
+  [component spec ^java.io.File f cancelled? on-progress force?]
   (try
-    (let [r (file->chunks component spec f cancelled? on-progress)]
+    (let [r (file->chunks component spec f cancelled? on-progress force?)]
       (if (= ::unchanged r)
         {:file f :unchanged true}
         {:file f :chunks r}))
@@ -127,7 +134,9 @@
   interrupt, rather than being lost together with the uncommitted big file. At most
   `index-concurrency` files are in flight, so memory stays bounded. Files whose
   content is unchanged since the last index are skipped without re-embedding (see
-  file->chunks), counted under :unchanged.
+  file->chunks), counted under :unchanged — unless opts :force is true, which
+  re-embeds every file regardless (the escape hatch for a chunker/schema change the
+  content+model gate can't detect; see file->chunks).
 
   The 3-arg form takes a no-arg `cancelled?` predicate, polled both here (per
   file) and inside the embedder (between batches, via file->chunks). Once it turns
@@ -152,7 +161,7 @@
   files embed at once), so on-progress must be thread-safe."
   ([paths opts] (index-paths! paths opts (constantly false) (fn [_])))
   ([paths opts cancelled?] (index-paths! paths opts cancelled? (fn [_])))
-  ([paths {:keys [recursive] :or {recursive true}} cancelled? on-progress]
+  ([paths {:keys [recursive force] :or {recursive true}} cancelled? on-progress]
    (let [idx    (ensure!)
          spec   (embed/model-spec)  ; one Ollama metadata probe per run; stamped on every chunk
          files  (distinct (mapcat #(walker/walk % {:recursive recursive}) paths))
@@ -161,7 +170,7 @@
          pool   (Executors/newFixedThreadPool config/index-concurrency)
          ecs    (ExecutorCompletionService. pool)  ; hands back futures in completion order
          submit (fn [^java.io.File f]
-                  (.submit ecs ^Callable (fn [] (embed-file-result idx spec f cancelled? on-progress))))
+                  (.submit ecs ^Callable (fn [] (embed-file-result idx spec f cancelled? on-progress force))))
          ;; Fold one file's result into the running counters, writing its chunks to
          ;; the index (as one atomic block). Returns [[indexed chunks skipped
          ;; unchanged errors] status fchunks] — status/fchunks feed the progress UI.

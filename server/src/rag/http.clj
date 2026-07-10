@@ -68,7 +68,7 @@
   A lone heartbeat space is whitespace on the front of the next JSON line, so a
   line-oriented client just trims it."
   [req]
-  (let [{:keys [paths recursive] :or {recursive true}} (read-body req)]
+  (let [{:keys [paths recursive force] :or {recursive true}} (read-body req)]
     (if (empty? paths)
       (json 400 {:error "index requires a non-empty \"paths\" array"})
       {:status  200
@@ -92,7 +92,7 @@
                  sched (Executors/newSingleThreadScheduledExecutor)]
              (.scheduleAtFixedRate sched ^Runnable beat
                                    heartbeat-secs heartbeat-secs TimeUnit/SECONDS)
-             (let [result (try (index/index-paths! paths {:recursive recursive}
+             (let [result (try (index/index-paths! paths {:recursive recursive :force force}
                                                    (fn [] @gone) emit)
                                (catch Throwable t {::error (.getMessage t)}))]
                (.shutdownNow sched)     ; no more heartbeats before the final line

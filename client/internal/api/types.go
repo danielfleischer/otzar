@@ -19,6 +19,7 @@ type Stats struct {
 type IndexRequest struct {
 	Paths     []string `json:"paths"`
 	Recursive bool     `json:"recursive"`
+	Force     bool     `json:"force,omitempty"` // re-embed even unchanged files (schema/chunker change)
 }
 
 // IndexResult is the "result" event's payload, streamed as the last line of the
@@ -96,6 +97,8 @@ type Hit struct {
 	Text           string          `json:"text"`
 	ChunkIdx       int             `json:"chunk_idx"`
 	MTime          int64           `json:"mtime"`
+	LineStart      int             `json:"line_start,omitempty"` // 1-based source line span; 0/absent
+	LineEnd        int             `json:"line_end,omitempty"`   // for chunks indexed before line tracking
 	ScoreBreakdown *ScoreBreakdown `json:"score_breakdown,omitempty"`
 }
 
@@ -119,6 +122,8 @@ type Document struct {
 	Ext       string `json:"ext,omitempty"`
 	MTime     int64  `json:"mtime"`
 	ChunkIdx  *int   `json:"chunk_idx,omitempty"`
+	LineStart int    `json:"line_start,omitempty"` // chunk shape only: 1-based source line span
+	LineEnd   int    `json:"line_end,omitempty"`
 	NumChunks int    `json:"num_chunks,omitempty"`
 	Text      string `json:"text"`
 	Stale     bool   `json:"stale,omitempty"` // file changed on disk since indexing

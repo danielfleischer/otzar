@@ -18,6 +18,7 @@ import (
 var (
 	indexRecursive bool
 	indexJSON      bool
+	indexForce     bool
 )
 
 var indexCmd = &cobra.Command{
@@ -46,7 +47,7 @@ chunks to the local index. Directories are only descended with --recursive.`,
 		// Show a live multi-line block on an interactive terminal; stay quiet when
 		// piped or emitting JSON so stdout carries only the result.
 		bar := newProgressBar(os.Stderr, !indexJSON && isTerminal(os.Stderr))
-		res, err := c.IndexStream(api.IndexRequest{Paths: paths, Recursive: indexRecursive}, bar.update)
+		res, err := c.IndexStream(api.IndexRequest{Paths: paths, Recursive: indexRecursive, Force: indexForce}, bar.update)
 		bar.finish()
 		if err != nil {
 			return err
@@ -251,4 +252,6 @@ func init() {
 	indexCmd.Flags().BoolVarP(&indexRecursive, "recursive", "r", false,
 		"descend into subdirectories")
 	indexCmd.Flags().BoolVarP(&indexJSON, "json", "j", false, "emit raw JSON")
+	indexCmd.Flags().BoolVarP(&indexForce, "force", "f", false,
+		"re-embed every file even if unchanged (needed after a chunker or schema change)")
 }
