@@ -56,5 +56,20 @@
   "How many files to extract+embed concurrently during /index. Embedding is
   Ollama-bound and parallelizes well (measured ~linear scaling to 8 in-flight
   requests), while the Lucene writer stays single-threaded. Override with
-  MYRAG_INDEX_CONCURRENCY."
+  MYRAG_INDEX_CONCURRENCY.
+
+  Note: with per-file batch parallelism (rag.embed/embed-pool sized by
+  embed-concurrency below), Ollama load is bounded by embed-concurrency, not this
+  — so this can be lowered to trim memory (fewer files in flight) without losing
+  throughput; the batches of even a single file will still saturate the budget."
   (int (or (some-> (System/getenv "MYRAG_INDEX_CONCURRENCY") Long/parseLong) 8)))
+
+(def embed-concurrency
+  "How many Ollama embed requests may be in flight at once, shared across the
+  whole index run — the global budget of concurrent embed calls. Every batch, from
+  many files or from the many batches of one large file, competes for this same
+  bound, so a single big file parallelizes without over-subscribing Ollama.
+  Embedding scales ~linearly to ~8 in-flight requests (and needs OLLAMA_NUM_PARALLEL
+  set high enough server-side to honor them); past that it thrashes. Override with
+  MYRAG_EMBED_CONCURRENCY."
+  (int (or (some-> (System/getenv "MYRAG_EMBED_CONCURRENCY") Long/parseLong) 8)))

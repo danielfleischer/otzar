@@ -18,7 +18,8 @@
   (:import [java.net URI]
            [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
             HttpResponse$BodyHandlers]
-           [java.time Duration]))
+           [java.time Duration]
+           [java.util.concurrent Callable Executors Future]))
 
 (def ^:private client
   (delay (-> (HttpClient/newBuilder)
@@ -26,6 +27,23 @@
              (.build))))
 
 (def ^:private mapper (j/object-mapper {:decode-key-fn keyword}))
+
+(def ^:private embed-pool
+  "Shared, fixed-size pool of embed workers — the global budget of concurrent
+  Ollama calls (config/embed-concurrency). Every batch, whether from many files or
+  from the many batches of one large file, is dispatched through this one pool, so
+  a single big file parallelizes without over-subscribing Ollama and a folder of
+  files still totals at most config/embed-concurrency in-flight requests. Opened on
+  first use and kept for the server's lifetime (a fixed pool parks idle threads).
+
+  NB: against Ollama this currently yields *no* speedup — Ollama loads embedding
+  models single-slot (llama-server `-np 1`) regardless of OLLAMA_NUM_PARALLEL, so
+  concurrent embed requests serialize server-side, and embeddinggemma is compute-
+  bound anyway (~120 vec/s here). The concurrency is kept for a future backend that
+  serves embeddings with real parallelism (multiple slots, an in-process DJL/ONNX
+  batcher, or sharded Ollama). Today's real levers are a faster model or fewer/
+  larger chunks, not request concurrency."
+  (delay (Executors/newFixedThreadPool config/embed-concurrency)))
 
 (defn- post-embed
   "POST `inputs` (a vector of strings) to Ollama /api/embed; return the parsed
@@ -100,30 +118,51 @@
 (defn- embed-prepared
   "Embed a seq of already-prompt-prefixed strings, split into requests of at most
   config/embed-batch inputs so no single Ollama call represents an unbounded
-  amount of work. `cancelled?` is polled before each batch; once it turns true the
-  embedding aborts (throwing ::cancelled) instead of dispatching the remaining
-  batches — this is how a disconnected client stops Ollama promptly, even partway
-  through a large file. After each batch `on-batch` is called with
-  [cumulative-done total] — how many of this file's inputs are embedded so far and
-  how many there are in all — so a caller can render a chunk-level progress bar
-  *within* a large file (the file-level callback in rag.index only fires once the
-  whole file is done). Returns a vector of float-arrays, one per input, in order;
-  empty input → [] with no request made."
+  amount of work. `cancelled?` is polled per batch; once it turns true the
+  embedding aborts (throwing ::cancelled) instead of doing the remaining batches —
+  this is how a disconnected client stops Ollama promptly, even partway through a
+  large file. After each batch `on-batch` is called with [cumulative-done total] —
+  how many of this file's inputs are embedded so far and how many there are in all
+  — so a caller can render a chunk-level progress bar *within* a large file (the
+  file-level callback in rag.index only fires once the whole file is done). Returns
+  a vector of float-arrays, one per input, in order; empty input → [] with no
+  request made.
+
+  The batches are dispatched across @embed-pool, so up to config/embed-concurrency
+  of them embed *concurrently* — the batches of a single large file parallelize,
+  not just different files. `embed-one-batch` is the thread-safe unit of work
+  (guard cancellation, call Ollama, report progress, return this batch's vectors in
+  order); safe to run on many pool threads at once because post-embed uses the
+  shared thread-safe HttpClient, `done` is an atom, and on-batch → the client's emit
+  is locked. All batches are submitted up front, then gathered in *submission
+  order* — so vectors come back batch-0-first regardless of which finished first,
+  which rag.index relies on to map vectors positionally onto chunks. The first
+  failed batch (e.g. a cancelled one throwing ::cancelled) is propagated, and the
+  siblings still in flight are cancelled so we don't keep Ollama busy on work whose
+  result is being discarded."
   [prepared cancelled? on-batch]
-  (let [total (count prepared)]
-    (loop [batches (partition-all config/embed-batch prepared)
-           done    0
-           acc     (transient [])]
-      (if-let [batch (first batches)]
-        (do
+  (let [prepared (vec prepared)
+        total    (count prepared)
+        batches  (vec (partition-all config/embed-batch prepared))
+        done     (atom 0)
+        embed-one-batch
+        (fn [batch]
           (when (cancelled?)
             (throw (ex-info "embedding cancelled" {:type ::cancelled})))
-          (let [batch (vec batch)
-                acc   (reduce conj! acc (map ->floats (:embeddings (post-embed batch))))
-                done  (+ done (count batch))]
-            (on-batch done total)
-            (recur (rest batches) done acc)))
-        (persistent! acc)))))
+          (let [vs (mapv ->floats (:embeddings (post-embed (vec batch))))]
+            (on-batch (swap! done + (count batch)) total)
+            vs))
+        ;; reify Callable (not a bare fn, which is *also* Runnable) so .submit binds
+        ;; the Callable overload — the Runnable one's Future.get returns nil, which
+        ;; would silently drop every batch's vectors.
+        futs (mapv (fn [batch]
+                     (.submit @embed-pool (reify Callable (call [_] (embed-one-batch batch)))))
+                   batches)]
+    (try
+      (into [] (mapcat (fn [^Future f] (.get f)) futs))
+      (catch java.util.concurrent.ExecutionException e
+        (run! #(.cancel ^Future % true) futs)     ; stop siblings still embedding
+        (throw (or (.getCause e) e))))))           ; surface the batch's own ex-info
 
 (defn embed-documents
   "title:str, texts:[str], cancelled?:(->bool), on-batch:(fn[n]) -> [float-array]
