@@ -103,36 +103,47 @@
   amount of work. `cancelled?` is polled before each batch; once it turns true the
   embedding aborts (throwing ::cancelled) instead of dispatching the remaining
   batches — this is how a disconnected client stops Ollama promptly, even partway
-  through a large file. Returns a vector of float-arrays, one per input, in order;
+  through a large file. After each batch `on-batch` is called with
+  [cumulative-done total] — how many of this file's inputs are embedded so far and
+  how many there are in all — so a caller can render a chunk-level progress bar
+  *within* a large file (the file-level callback in rag.index only fires once the
+  whole file is done). Returns a vector of float-arrays, one per input, in order;
   empty input → [] with no request made."
-  [prepared cancelled?]
-  (loop [batches (partition-all config/embed-batch prepared)
-         acc     (transient [])]
-    (if-let [batch (first batches)]
-      (do
-        (when (cancelled?)
-          (throw (ex-info "embedding cancelled" {:type ::cancelled})))
-        (recur (rest batches)
-               (reduce conj! acc (map ->floats (:embeddings (post-embed (vec batch)))))))
-      (persistent! acc))))
+  [prepared cancelled? on-batch]
+  (let [total (count prepared)]
+    (loop [batches (partition-all config/embed-batch prepared)
+           done    0
+           acc     (transient [])]
+      (if-let [batch (first batches)]
+        (do
+          (when (cancelled?)
+            (throw (ex-info "embedding cancelled" {:type ::cancelled})))
+          (let [batch (vec batch)
+                acc   (reduce conj! acc (map ->floats (:embeddings (post-embed batch))))
+                done  (+ done (count batch))]
+            (on-batch done total)
+            (recur (rest batches) done acc)))
+        (persistent! acc)))))
 
 (defn embed-documents
-  "title:str, texts:[str], cancelled?:(->bool) -> [float-array]
+  "title:str, texts:[str], cancelled?:(->bool), on-batch:(fn[n]) -> [float-array]
   Embed chunk texts for *storage* (indexing side), applying the document prompt
   with `title` (the source file name) so the vectors carry a little document
   context. `cancelled?` (default never) is polled between batches so an in-progress
-  file can be abandoned when the client disconnects. Returns a vector of
-  float-arrays, one per input, in order."
-  ([title texts] (embed-documents title texts (constantly false)))
-  ([title texts cancelled?]
-   (embed-prepared (map #(document-prompt title %) texts) cancelled?)))
+  file can be abandoned when the client disconnects. `on-batch` (default no-op) is
+  called [done total] after each batch for chunk-level progress. Returns a vector
+  of float-arrays, one per input, in order."
+  ([title texts] (embed-documents title texts (constantly false) (fn [_ _])))
+  ([title texts cancelled?] (embed-documents title texts cancelled? (fn [_ _])))
+  ([title texts cancelled? on-batch]
+   (embed-prepared (map #(document-prompt title %) texts) cancelled? on-batch)))
 
 (defn embed-query
   "str -> float-array
   Embed a single search string for *retrieval*, applying the query prompt.
   Returns one float-array."
   ^floats [text]
-  (first (embed-prepared [(str query-prompt text)] (constantly false))))
+  (first (embed-prepared [(str query-prompt text)] (constantly false) (fn [_ _]))))
 
 (defn- tag-digest
   "First 12 hex of Ollama's manifest sha256 for `tag`, from /api/tags, or nil.

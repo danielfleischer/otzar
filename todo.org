@@ -3,17 +3,20 @@
 #+language: en
 
 1. [ ] client lifecycle of ollama.
-2. [ ] indexing status: files, progress bar.
+2. [X] indexing status: files, progress bar. /index now streams NDJSON
+   (start/chunk/file/result events); client renders a live
+   =[███░░░] 12/40 files · 1,240 chunks · name= bar on a TTY, plain summary
+   otherwise. The chunk counter ticks per embed batch so the line moves even
+   during a single large (10-min) file. Added =unchanged= to the summary.
 3. [X] ollama request timed out during long indexing sessions. Increased from 60 to 300, going to be solved later with
    parallel calls.
-4. [ ] return line number of relevant chunks. Not necessarily as part of the mcp.
-   Design + feasibility written up in the plan §13.7 (MCP-driven: 1-based line
-   range, omitted for non-text extracts).
-5. [ ] CLI flags short version =-e= instead of =--ext=.
+4. [ ] return line number of relevant chunks. Not necessarily as part of the mcp. Design + feasibility written up in the
+   plan §13.7 (MCP-driven: 1-based line range, omitted for non-text extracts).
+5. [X] CLI flags short version =-e= instead of =--ext=. Added short flags across =query= (-k -m -e -p -a -j) and -j on =index=.
 6. [ ] Adding CLI sub-verbs to make it nicer.
-7. [ ] surface =score_breakdown= in the client. The server emits it per hit on
-   hybrid queries ({:keyword _ :vector _}), but the Go =Hit= struct has no field
-   for it, so =query --json= silently drops it.
-8. [ ] Orphan cleanup on file delete/rename — needs a delete-detection sweep. I suggest =client index update= that scans for
-   modifications and deletions.
-9. [ ] Dimension-change detection — currently surfaces as a cryptic Lucene throw rather than a clean "run clear-index" message.
+7. [X] surface =score_breakdown= in the client. Added =ScoreBreakdown= (nullable keyword/vector) to the Go =Hit= struct so
+   =query --json= now carries it; omitempty keeps non-hybrid hits clean. Table view unchanged (--json only).
+8. [ ] Orphan cleanup on file delete/rename — needs a delete-detection sweep. I suggest =client index update= that scans
+   for modifications and deletions.
+9. [ ] Dimension-change detection — currently surfaces as a cryptic Lucene throw rather than a clean "run clear-index"
+   message.

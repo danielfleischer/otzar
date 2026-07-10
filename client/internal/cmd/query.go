@@ -89,14 +89,14 @@ func snippet(text string) string {
 }
 
 func init() {
-	queryCmd.Flags().IntVar(&queryK, "k", 10, "number of results")
-	queryCmd.Flags().StringVar(&queryMode, "mode", "hybrid",
+	queryCmd.Flags().IntVarP(&queryK, "k", "k", 10, "number of results")
+	queryCmd.Flags().StringVarP(&queryMode, "mode", "m", "hybrid",
 		"retrieval mode: hybrid | keyword | vector")
-	queryCmd.Flags().StringSliceVar(&queryExt, "ext", nil,
-		"filter by file extension, e.g. --ext md,txt")
-	queryCmd.Flags().StringVar(&queryPath, "path", "",
-		"filter to paths under this prefix, e.g. --path /notes/")
-	queryCmd.Flags().StringVar(&queryAfter, "after", "",
-		"filter to files modified on/after this date, e.g. --after 2025-01-01")
-	queryCmd.Flags().BoolVar(&queryJSON, "json", false, "emit raw JSON")
+	queryCmd.Flags().StringSliceVarP(&queryExt, "ext", "e", nil,
+		"filter by file extension, e.g. -e md,txt")
+	queryCmd.Flags().StringVarP(&queryPath, "path", "p", "",
+		"filter to paths under this prefix, e.g. -p /notes/")
+	queryCmd.Flags().StringVarP(&queryAfter, "after", "a", "",
+		"filter to files modified on/after this date, e.g. -a 2025-01-01")
+	queryCmd.Flags().BoolVarP(&queryJSON, "json", "j", false, "emit raw JSON")
 }

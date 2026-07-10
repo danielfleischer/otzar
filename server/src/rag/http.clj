@@ -53,25 +53,37 @@
   2)
 
 (defn- index-handler
-  "Index the requested paths, streaming the response so a disconnected client
-  cancels the work. A background timer writes a heartbeat space every
-  `heartbeat-secs` and flushes; when the client is gone the flush throws and we
-  flip a `gone` flag that index-paths! polls — per file, and inside the embedder
-  between batches — so indexing (and the Ollama work in flight) stops within
-  ~one heartbeat + one embed batch. The heartbeats are JSON-insignificant
-  whitespace before the final result object, so clients need no special handling."
+  "Index the requested paths, streaming the response as newline-delimited JSON so
+  the client can render live progress and a disconnected client cancels the work.
+  index-paths! calls back with `start` and `file` events, each written as one JSON
+  line; the terminal line is {\"type\":\"result\" ...} (or {\"type\":\"error\"}).
+
+  A background timer also writes a heartbeat space every `heartbeat-secs` and
+  flushes; when the client is gone the flush (from either the timer or an event
+  write) throws and we flip a `gone` flag that index-paths! polls — per file, and
+  inside the embedder between batches — so indexing (and the Ollama work in flight)
+  stops within ~one heartbeat + one embed batch. The heartbeat keeps that bound
+  even during a single long file, when no `file` event is in flight to probe with.
+  A lone heartbeat space is whitespace on the front of the next JSON line, so a
+  line-oriented client just trims it."
   [req]
   (let [{:keys [paths recursive] :or {recursive true}} (read-body req)]
     (if (empty? paths)
       (json 400 {:error "index requires a non-empty \"paths\" array"})
       {:status  200
-       :headers {"Content-Type" "application/json"}
+       :headers {"Content-Type" "application/x-ndjson"}
        :body
        (reify rcp/StreamableResponseBody
          (write-body-to-stream [_ _ out]
            (let [^OutputStream out out
-                 gone  (atom false)     ; set by a failed heartbeat = client left
-                 lock  (Object.)        ; serialize the two writer threads onto `out`
+                 gone  (atom false)     ; set by a failed write = client left
+                 lock  (Object.)        ; serialize the writer threads onto `out`
+                 emit  (fn [event]      ; one NDJSON line; a write failure = gone
+                         (locking lock
+                           (try
+                             (.write out (.getBytes (str (j/write-value-as-string event) "\n") "UTF-8"))
+                             (.flush out)
+                             (catch IOException _ (reset! gone true)))))
                  beat  (fn []
                          (locking lock
                            (try (.write out (int \space)) (.flush out)
@@ -80,14 +92,12 @@
              (.scheduleAtFixedRate sched ^Runnable beat
                                    heartbeat-secs heartbeat-secs TimeUnit/SECONDS)
              (let [result (try (index/index-paths! paths {:recursive recursive}
-                                                   (fn [] @gone))
-                               (catch Throwable t {:error (.getMessage t)}))]
-               (.shutdownNow sched)     ; no more heartbeats before the final write
-               (locking lock
-                 (try
-                   (.write out (.getBytes (j/write-value-as-string result) "UTF-8"))
-                   (.flush out)
-                   (catch IOException _ nil)))   ; client already gone; nothing to send
+                                                   (fn [] @gone) emit)
+                               (catch Throwable t {::error (.getMessage t)}))]
+               (.shutdownNow sched)     ; no more heartbeats before the final line
+               (emit (if-let [e (::error result)]
+                       {:type "error" :error e}
+                       {:type "result" :result result}))
                (.close out)))))})))
 
 (defn- query-handler [req]

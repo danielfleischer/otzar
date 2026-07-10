@@ -54,8 +54,11 @@
   next time. (A change in embedding *dimension* additionally requires a full reindex
   — clear-index — since Lucene stores one vector dimension per field.)
   `cancelled?` is threaded into the embedder so a large file's embedding is
-  abandoned promptly (between batches) when the client disconnects."
-  [component spec ^java.io.File f cancelled?]
+  abandoned promptly (between batches) when the client disconnects. `on-progress`
+  receives this file's progress events: once {:type \"file-start\" :path :total
+  <chunk count>} when embedding begins, then {:type \"chunk\" :path :done :total}
+  per batch. Emitted from a worker thread, so `on-progress` must be thread-safe."
+  [component spec ^java.io.File f cancelled? on-progress]
   (let [path      (.getAbsolutePath f)
         doc-id    (sha1 path)
         mtime     (.lastModified f)
@@ -67,9 +70,13 @@
         (let [csha (sha1 text)]
           (if (and reusable? (= csha (:content_sha1 prior)))
             ::unchanged
-            (let [ext    (walker/ext f)
-                  chunks (chunker/pack (segmenter/segment text))
-                  vecs   (embed/embed-documents (.getName f) (map :text chunks) cancelled?)]
+            (let [ext      (walker/ext f)
+                  chunks   (chunker/pack (segmenter/segment text))
+                  _        (when (seq chunks)
+                             (on-progress {:type "file-start" :path path :total (count chunks)}))
+                  on-batch (fn [done total]
+                             (on-progress {:type "chunk" :path path :done done :total total}))
+                  vecs     (embed/embed-documents (.getName f) (map :text chunks) cancelled? on-batch)]
               (mapv (fn [{:keys [chunk_idx text]} embedding]
                       {:id           (str doc-id ":" chunk_idx)
                        :doc_id       doc-id
@@ -90,16 +97,16 @@
     {:file f :unchanged true}   already indexed, identical content (nothing embedded)
     {:file f :chunks <seq>}     ok; empty/nil chunks means the extractor skipped it
     {:file f :error <msg>}      extract or embed threw (incl. a cancelled embed)"
-  [component spec ^java.io.File f cancelled?]
+  [component spec ^java.io.File f cancelled? on-progress]
   (try
-    (let [r (file->chunks component spec f cancelled?)]
+    (let [r (file->chunks component spec f cancelled? on-progress)]
       (if (= ::unchanged r)
         {:file f :unchanged true}
         {:file f :chunks r}))
     (catch Exception e {:file f :error (.getMessage e)})))
 
 (defn index-paths!
-  "paths:[str|File], {:recursive bool}, cancelled?:(->bool)? -> {:indexed :chunks :skipped :unchanged :errors [..] :cancelled?}
+  "paths:[str|File], {:recursive bool}, cancelled?:(->bool)?, on-progress:(fn[event])? -> {:indexed :chunks :skipped :unchanged :errors [..] :cancelled?}
   Walk `paths`, extract + chunk + embed each file, and add all chunks to the
   index. The change-check + extract+embed work runs through a bounded pool of
   `config/index-concurrency` workers (it is Ollama-bound and parallelizes well);
@@ -116,15 +123,28 @@
   :cancelled true. rag.http drives it from a heartbeat write so a disconnected
   client stops the indexing — and, because it reaches into the embed batches, the
   Ollama work in flight is bounded to the current batch rather than a whole file.
-  Returns {:indexed <files> :chunks <n> :skipped :unchanged :errors [{:path ..}]}."
-  ([paths opts] (index-paths! paths opts (constantly false)))
-  ([paths {:keys [recursive] :or {recursive true}} cancelled?]
+  Returns {:indexed <files> :chunks <n> :skipped :unchanged :errors [{:path ..}]}.
+
+  `on-progress` (optional, default no-op) is called with plain event maps as work
+  advances, for a streaming progress UI: once with {:type \"start\" :total <file
+  count>} after the walk enumerates, then once per completed file with {:type
+  \"file\" :done <files-processed-so-far> :path <abs> :status \"indexed\"|
+  \"unchanged\"|\"skipped\"|\"error\" :chunks <n written for this file>}. As each
+  file embeds it also emits {:type \"file-start\" :path <abs> :total <chunks>} then
+  {:type \"chunk\" :path <abs> :done <so far> :total <chunks>} per batch. The
+  `file`/`start` events come from this (the draining) thread in completion order;
+  `file-start`/`chunk` events come from the worker threads (up to index-concurrency
+  files embed at once), so on-progress must be thread-safe."
+  ([paths opts] (index-paths! paths opts (constantly false) (fn [_])))
+  ([paths opts cancelled?] (index-paths! paths opts cancelled? (fn [_])))
+  ([paths {:keys [recursive] :or {recursive true}} cancelled? on-progress]
    (let [idx    (ensure!)
          spec   (embed/model-spec)  ; one Ollama metadata probe per run; stamped on every chunk
          files  (distinct (mapcat #(walker/walk % {:recursive recursive}) paths))
+         _      (on-progress {:type "start" :total (count files)})
          pool   (Executors/newFixedThreadPool config/index-concurrency)
          submit (fn [^java.io.File f]
-                  (.submit pool ^Callable (fn [] (embed-file-result idx spec f cancelled?))))
+                  (.submit pool ^Callable (fn [] (embed-file-result idx spec f cancelled? on-progress))))
          finish (fn [indexed chunks skipped unchanged errors cancelled]
                   (lucene/commit! idx)
                   (cond-> {:indexed indexed :chunks chunks :skipped skipped
@@ -147,14 +167,21 @@
                      in-flight (cond-> (pop in-flight)
                                  (seq pending) (conj (submit (first pending))))
                      pending   (if (seq pending) (rest pending) pending)
-                     [indexed chunks skipped unchanged errors]
+                     [indexed chunks skipped unchanged errors status fchunks]
                      (cond
                        error    [indexed chunks skipped unchanged
-                                 (conj errors {:path (.getAbsolutePath file) :error error})]
-                       unchg    [indexed chunks skipped (inc unchanged) errors]
+                                 (conj errors {:path (.getAbsolutePath file) :error error})
+                                 "error" 0]
+                       unchg    [indexed chunks skipped (inc unchanged) errors "unchanged" 0]
                        (seq cs) (do (lucene/add-chunks! idx cs)
-                                    [(inc indexed) (+ chunks (count cs)) skipped unchanged errors])
-                       :else    [indexed chunks (inc skipped) unchanged errors])]
+                                    [(inc indexed) (+ chunks (count cs)) skipped unchanged errors
+                                     "indexed" (count cs)])
+                       :else    [indexed chunks (inc skipped) unchanged errors "skipped" 0])]
+                 (on-progress {:type "file"
+                               :done (+ indexed unchanged skipped (count errors))
+                               :path (.getAbsolutePath file)
+                               :status status
+                               :chunks fchunks})
                  (recur in-flight pending indexed chunks skipped unchanged errors))))
            (finish indexed chunks skipped unchanged errors false)))
        (finally (.shutdown pool))))))

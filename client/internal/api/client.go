@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -88,13 +89,56 @@ func (c *Client) Stats() (*Stats, error) {
 	return &s, nil
 }
 
-// Index posts to /index to index the given paths.
-func (c *Client) Index(req IndexRequest) (*IndexResult, error) {
-	var r IndexResult
-	if err := c.postJSON("/index", req, &r); err != nil {
+// IndexStream posts to /index and consumes the NDJSON progress stream, invoking
+// onEvent for each "start"/"file" event (nil to ignore them) and returning the
+// terminal "result" summary. An "error" event becomes a Go error, as does a
+// stream that ends without a result.
+func (c *Client) IndexStream(req IndexRequest, onEvent func(IndexEvent)) (*IndexResult, error) {
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(req); err != nil {
 		return nil, err
 	}
-	return &r, nil
+	resp, err := c.http.Post(c.BaseURL+"/index", "application/json", &buf)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("POST /index: %s: %s", resp.Status, string(b))
+	}
+
+	sc := bufio.NewScanner(resp.Body)
+	// A "result" line with many per-file errors can be large; lift the line cap.
+	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	var result *IndexResult
+	for sc.Scan() {
+		line := bytes.TrimSpace(sc.Bytes()) // drop leading heartbeat spaces
+		if len(line) == 0 {
+			continue
+		}
+		var ev IndexEvent
+		if err := json.Unmarshal(line, &ev); err != nil {
+			return nil, fmt.Errorf("index stream: bad line %q: %w", line, err)
+		}
+		switch ev.Type {
+		case "result":
+			result = ev.Result
+		case "error":
+			return nil, fmt.Errorf("indexing failed: %s", ev.Error)
+		default:
+			if onEvent != nil {
+				onEvent(ev)
+			}
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, fmt.Errorf("index stream ended without a result")
+	}
+	return result, nil
 }
 
 // Query posts to /query and returns the ranked hits.
