@@ -27,3 +27,18 @@
     ;; Documented, not a bug — see segmenter ns docstring. Harmless for Hebrew.
     (is (= ["Dr." "Smith went to Washington."]
            (segmenter/segment "Dr. Smith went to Washington.")))))
+
+(deftest newline-is-a-hard-boundary
+  (testing "every line break splits, even without terminating punctuation"
+    (is (= ["buy milk" "walk the dog" "call mom"]
+           (segmenter/segment "buy milk\nwalk the dog\ncall mom")))
+    (testing "a checklist with no periods becomes one sentence per line"
+      (is (= ["- item one" "- item two" "- item three"]
+             (segmenter/segment "- item one\n- item two\n- item three"))))
+    (testing "blank lines and \\r\\n / \\r are boundaries too, and produce no empties"
+      (is (= ["first block" "second block"]
+             (segmenter/segment "first block\n\nsecond block")))
+      (is (= ["a" "b" "c"] (segmenter/segment "a\r\nb\rc"))))
+    (testing "punctuation still splits within a line"
+      (is (= ["One." "Two." "Three."]
+             (segmenter/segment "One. Two.\nThree."))))))

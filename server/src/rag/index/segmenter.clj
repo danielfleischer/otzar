@@ -10,25 +10,42 @@
   Trade-off: rule-based breaking splits period-abbreviations like \"Dr.\" into
   their own sentence. That barely affects Hebrew — which abbreviates with the
   geresh/gershayim (׳ ״), not periods — and is only a minor chunking imperfection
-  in English, which the ~overlap in the packer softens further."
+  in English, which the ~overlap in the packer softens further.
+
+  Line breaks are hard sentence boundaries: the text is split on every newline
+  first (a lone \\n counts), then BreakIterator splits each line on punctuation.
+  BreakIterator alone does not break on newlines — so line-oriented text with no
+  periods (checklists, bullet lists, notes) would otherwise collapse into a single
+  giant \"sentence\", and the packer has no size cap to catch it. This matches how
+  such text is written and read: one item per line."
   (:require [clojure.string :as str])
   (:import [java.text BreakIterator]
            [java.util Locale]))
+
+(defn- sentences-in
+  "Sentence-split one already-single-line string via `bi` (locale-neutral Unicode
+  rules), returning a vector of trimmed, non-blank sentences in order."
+  [^BreakIterator bi ^String line]
+  (.setText bi line)
+  (loop [start (.first bi), acc (transient [])]
+    (let [end (.next bi)]
+      (if (= end BreakIterator/DONE)
+        (persistent! acc)
+        (let [s (str/trim (subs line start end))]
+          (recur end (if (str/blank? s) acc (conj! acc s))))))))
 
 (defn segment
   "str -> [str]
   Split `text` into a vector of sentence strings, in order. Each sentence is
   trimmed and empty results dropped; blank/nil input yields an empty vector.
-  Segmentation uses locale-neutral (ROOT) Unicode sentence rules, so it works
-  across scripts."
+
+  Splits on every line break first (a lone newline is a hard boundary), then
+  applies locale-neutral (ROOT) Unicode sentence rules within each line — so it
+  works across scripts and never lets a run of un-punctuated lines collapse into
+  one oversized sentence. A single BreakIterator is reused across lines (safe:
+  each line is fully segmented before the next .setText)."
   [text]
   (if (str/blank? text)
     []
     (let [bi (BreakIterator/getSentenceInstance Locale/ROOT)]
-      (.setText bi ^String text)
-      (loop [start (.first bi), acc (transient [])]
-        (let [end (.next bi)]
-          (if (= end BreakIterator/DONE)
-            (persistent! acc)
-            (let [s (str/trim (subs text start end))]
-              (recur end (if (str/blank? s) acc (conj! acc s))))))))))
+      (into [] (mapcat #(sentences-in bi %) (str/split text #"\R"))))))
