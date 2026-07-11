@@ -79,6 +79,11 @@ func processAlive(pid int) bool {
 	return syscall.Kill(pid, 0) == nil
 }
 
+// serverDir is the absolute path to the Clojure server dir, baked in at build
+// time via -ldflags (-X myrag/internal/lifecycle.serverDir=...); see Makefile.
+// Empty when built without that flag (plain `go build`, `go test`).
+var serverDir string
+
 // resolveServerDir finds the Clojure server directory. During development the
 // server lives at <repo>/server; once we ship an uberjar this goes away.
 func resolveServerDir() (string, error) {
@@ -87,6 +92,11 @@ func resolveServerDir() (string, error) {
 	}
 	if _, err := os.Stat(filepath.Join("server", "deps.edn")); err == nil {
 		return filepath.Abs("server")
+	}
+	if serverDir != "" {
+		if _, err := os.Stat(filepath.Join(serverDir, "deps.edn")); err == nil {
+			return serverDir, nil
+		}
 	}
 	if exe, err := os.Executable(); err == nil {
 		cand := filepath.Join(filepath.Dir(exe), "..", "server")

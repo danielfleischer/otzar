@@ -5,10 +5,11 @@ INSTALL_DIR ?= $(HOME)/.local/bin
 build: client ## Build the Go client into bin/myrag
 
 client: ## Compile the Go CLI
-	go build -C client -o ../bin/myrag .
+	go build -C client -ldflags "-X 'myrag/internal/lifecycle.serverDir=$(CURDIR)/server'" -o ../bin/myrag .
 
 install: build ## Install the client binary to ~/.local/bin (override with INSTALL_DIR=)
 	@mkdir -p $(INSTALL_DIR)
+	rm -f $(INSTALL_DIR)/myrag
 	cp bin/myrag $(INSTALL_DIR)/myrag
 	@echo "installed $(INSTALL_DIR)/myrag"
 

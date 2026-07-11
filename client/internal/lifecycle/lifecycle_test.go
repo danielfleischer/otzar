@@ -2,9 +2,40 @@ package lifecycle
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
+
+// TestResolveServerDirBaked verifies the build-time-baked serverDir is used as a
+// fallback: with MYRAG_SERVER_DIR unset and no ./server in the working dir, the
+// baked path (validated by its deps.edn) is returned.
+func TestResolveServerDirBaked(t *testing.T) {
+	t.Setenv("MYRAG_SERVER_DIR", "")
+
+	// Run from a scratch cwd so the ./server/deps.edn check misses.
+	cwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+
+	baked := t.TempDir()
+	if err := os.WriteFile(filepath.Join(baked, "deps.edn"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := serverDir
+	serverDir = baked
+	t.Cleanup(func() { serverDir = old })
+
+	got, err := resolveServerDir()
+	if err != nil {
+		t.Fatalf("resolveServerDir: %v", err)
+	}
+	if got != baked {
+		t.Fatalf("got %q, want baked path %q", got, baked)
+	}
+}
 
 // TestStartLockMutualExclusion verifies the file lock that serializes server
 // startup: while one holder has it, a second acquisition blocks until timeout,
