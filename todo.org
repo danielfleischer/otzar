@@ -15,11 +15,12 @@
    hits + get-chunk. Go: query table prints =path:Lstart-Lend=; MCP =search= carries the range and announces it. Omitted
    (not null) for pre-line-tracking chunks and non-text extracts. Needs a reindex to populate existing docs.
 5. [X] CLI flags short version =-e= instead of =--ext=. Added short flags across =query= (-k -m -e -p -a -j) and -j on =index=.
-6. [ ] Adding CLI sub-verbs to make it nicer.
-7. [X] surface =score_breakdown= in the client. Added =ScoreBreakdown= (nullable keyword/vector) to the Go =Hit= struct so
+6. [X] surface =score_breakdown= in the client. Added =ScoreBreakdown= (nullable keyword/vector) to the Go =Hit= struct so
    =query --json= now carries it; omitempty keeps non-hybrid hits clean. Table view unchanged (--json only).
-8. [X] Orphan cleanup on file delete/rename. Landed as =myrag prune=: POST /prune walks the indexed paths, deletes chunks
+7. [X] Orphan cleanup on file delete/rename. Landed as =myrag prune=: POST /prune walks the indexed paths, deletes chunks
    for any whose source file is gone from disk (=lucene/delete-by-paths!=), then =reclaim-deletes!= expunges them so
    =list_indexed_paths= / stats stop counting them. =--dry-run= previews; renames surface as an orphan at the old path.
-9. [X] Dimension-change detection — currently surfaces as a cryptic Lucene throw rather than a clean "run clear-index"
+8. [X] Dimension-change detection — currently surfaces as a cryptic Lucene throw rather than a clean "run clear-index"
    message.
+9. [ ] Adding CLI sub-verbs to make it nicer.
+10. [ ] Schema versioning and reindex upon bump. 
