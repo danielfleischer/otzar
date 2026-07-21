@@ -71,6 +71,26 @@ func (c *Client) postJSON(path string, body, out any) error {
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
+func (c *Client) deleteJSON(path string, out any) error {
+	req, err := http.NewRequest(http.MethodDelete, c.BaseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("DELETE %s: %s: %s", path, resp.Status, string(b))
+	}
+	if out == nil {
+		return nil
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+
 // Health fetches GET /health.
 func (c *Client) Health() (*Health, error) {
 	var h Health
@@ -146,6 +166,16 @@ func (c *Client) IndexStream(req IndexRequest, onEvent func(IndexEvent)) (*Index
 func (c *Client) Prune(dryRun bool) (*PruneResult, error) {
 	var r PruneResult
 	if err := c.postJSON("/prune", PruneRequest{DryRun: dryRun}, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// Clear sends DELETE /index to wipe the whole index — every chunk of every file.
+// Irreversible; the CLI gates it behind a confirmation. Returns the counts removed.
+func (c *Client) Clear() (*ClearResult, error) {
+	var r ClearResult
+	if err := c.deleteJSON("/index", &r); err != nil {
 		return nil, err
 	}
 	return &r, nil

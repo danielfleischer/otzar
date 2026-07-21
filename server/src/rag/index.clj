@@ -58,8 +58,9 @@
   hash and still skip if the content sha1 matches (an mtime bump with no real edit).
   Only genuinely new/changed/re-modelled files reach the embedder, whose vectors are
   attached as :embedding; every chunk also carries :content_sha1 and :model_spec for
-  next time. (A change in embedding *dimension* additionally requires a full reindex
-  — clear-index — since Lucene stores one vector dimension per field.)
+  next time. (A change in embedding *dimension* additionally requires a full reset
+  — `myrag admin clear`, then re-index — since Lucene stores one vector dimension
+  per field.)
   `force?` bypasses all of that: every file is re-extracted, re-chunked and
   re-embedded even when nothing changed. It's the escape hatch for changes the
   content/model gate can't see — a new chunker or a chunk-schema field (e.g. adding
@@ -333,6 +334,20 @@
        (lucene/reclaim-deletes! idx))
      (cond-> {:removed orphans :kept (- (count indexed) (count orphans))}
        dry-run (assoc :dry_run true)))))
+
+(defn clear!
+  "-> {:removed_docs int, :removed_chunks int}
+  Wipe the whole index — drop every chunk of every file — then commit and refresh
+  so stats/paths immediately read empty. Returns the counts that were removed (the
+  index contents read just before the wipe), for the caller to report. Opens the
+  index if needed, so a clear on a freshly-booted server still resets on-disk
+  state. This is the supported reset after an embedding-model *dimension* change,
+  which Lucene can't apply to a live field (lucene/clear!): clear, then re-index."
+  []
+  (let [idx (ensure!)
+        {:keys [num_docs num_chunks]} (lucene/stats idx)]
+    (lucene/clear! idx)
+    {:removed_docs num_docs :removed_chunks num_chunks}))
 
 (defn stats
   "-> {:num_docs int, :num_chunks int}

@@ -74,6 +74,13 @@ type PruneResult struct {
 	DryRun  bool     `json:"dry_run,omitempty"`
 }
 
+// ClearResult is the body returned by DELETE /index: the counts that were removed
+// (the index's contents read just before the wipe).
+type ClearResult struct {
+	RemovedDocs   int `json:"removed_docs"`
+	RemovedChunks int `json:"removed_chunks"`
+}
+
 // QueryRequest is the body of POST /query.
 type QueryRequest struct {
 	Q       string         `json:"q"`

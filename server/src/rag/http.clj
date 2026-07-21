@@ -1,7 +1,8 @@
 (ns rag.http
-  "Ring/reitit handlers: /health, /stats, /paths, /index, /prune, /query,
-  /document/:id, /shutdown. /prune is the only deletion verb — it drops chunks for
-  source files gone from disk. DELETE /index, /reindex remain unscheduled (docs/api.md)."
+  "Ring/reitit handlers: /health, /stats, /paths, /index (POST add, DELETE clear),
+  /prune, /query, /document/:id, /shutdown. Deletion verbs: /prune drops chunks for
+  source files gone from disk; DELETE /index wipes the whole index. /reindex remains
+  unscheduled (docs/api.md)."
   (:require [reitit.ring :as ring]
             [ring.core.protocols :as rcp]
             [jsonista.core :as j]
@@ -110,6 +111,14 @@
   (let [{:keys [dry_run]} (read-body req)]
     (json 200 (index/prune! {:dry-run dry_run}))))
 
+(defn- clear-handler
+  "DELETE /index — wipe the whole index (every chunk of every file), commit, and
+  refresh. Irreversible; the client gates it behind a confirmation. Returns the
+  counts removed {:removed_docs n :removed_chunks n} (see index/clear!). This is
+  the supported reset after an embedding-dimension change."
+  [_]
+  (json 200 (index/clear!)))
+
 (defn- query-handler [req]
   (let [{:keys [q k mode filters fusion] :or {k 10 mode "hybrid"}} (read-body req)]
     (if (str/blank? q)
@@ -143,7 +152,8 @@
     [["/health"   {:get  health}]
      ["/stats"    {:get  (with-errors stats)}]
      ["/paths"    {:get  (with-errors paths)}]
-     ["/index"    {:post (with-errors index-handler)}]
+     ["/index"    {:post   (with-errors index-handler)
+                   :delete (with-errors clear-handler)}]
      ["/prune"    {:post (with-errors prune-handler)}]
      ["/query"    {:post (with-errors query-handler)}]
      ["/document/:id" {:get (with-errors document-handler)}]

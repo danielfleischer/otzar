@@ -6,17 +6,18 @@ port the server publishes to `~/.myrag/server.port`.
 
 Status legend: ✅ implemented · ⬜ planned (milestone in parens).
 
-| Method | Path            | Status | Notes                                  |
-|--------|-----------------|--------|----------------------------------------|
-| GET    | `/health`       | ✅     | `{status, uptime_s}`                    |
-| GET    | `/stats`        | ✅     | `{num_docs, num_chunks}`                 |
-| GET    | `/paths`        | ✅     | `{count, paths}` — distinct indexed source files (MCP `list_indexed_paths`) |
-| POST   | `/shutdown`     | ✅     | `{ok: true}`, then the process exits    |
-| POST   | `/index`        | ✅     | `{paths, recursive}` → `{indexed, ...}`; incremental — re-run to skip unchanged files and replace changed ones |
-| POST   | `/query`        | ✅     | `{q, k, mode, filters, fusion}` → `{hits}`; `mode` hybrid (default)/keyword/vector |
-| GET    | `/document/:id` | ✅     | `id` is a `doc_id` (whole file) or a chunk `id`; 404 if unknown |
-| POST   | `/reindex`      | ⬜      | Unscheduled — `POST /index` is already incremental, so a separate verb only earns its keep as a "force re-embed unchanged" flag |
-| DELETE | `/index`        | ⬜      | Unscheduled — doc removal / orphan cleanup on file delete+rename (todo.org #8); today docs are only replaced on reindex, never deleted |
+| Method | Path            | Status | Notes                                                                                                                                  |
+|--------|-----------------|--------|----------------------------------------------------------------------------------------------------------------------------------------|
+| GET    | `/health`       | ✅     | `{status, uptime_s}`                                                                                                                   |
+| GET    | `/stats`        | ✅     | `{num_docs, num_chunks}`                                                                                                               |
+| GET    | `/paths`        | ✅     | `{count, paths}` — distinct indexed source files (MCP `list_indexed_paths`)                                                            |
+| POST   | `/shutdown`     | ✅     | `{ok: true}`, then the process exits                                                                                                   |
+| POST   | `/index`        | ✅     | `{paths, recursive}` → `{indexed, ...}`; incremental — re-run to skip unchanged files and replace changed ones                         |
+| POST   | `/query`        | ✅     | `{q, k, mode, filters, fusion}` → `{hits}`; `mode` hybrid (default)/keyword/vector                                                     |
+| GET    | `/document/:id` | ✅     | `id` is a `doc_id` (whole file) or a chunk `id`; 404 if unknown                                                                        |
+| POST   | `/reindex`      | ⬜     | Unscheduled — `POST /index` is already incremental, so a separate verb only earns its keep as a "force re-embed unchanged" flag        |
+| DELETE | `/index`        | ✅     | Wipe the whole index → `{removed_docs, removed_chunks}`; the supported reset after an embedding-dimension change (`myrag admin clear`) |
+| POST   | `/prune`        | ✅     | `{dry_run}` → `{removed, kept}`; drop chunks for source files gone from disk                                                           |
 
 ## Lifecycle files (`~/.myrag/`)
 
@@ -62,6 +63,22 @@ Response:
 - `indexed` — files that produced at least one chunk.
 - `skipped` — files skipped by the extractor (empty, oversized, or binary).
 - `errors` — files that threw during extraction/chunking.
+
+### DELETE /index
+
+Wipe the entire index — every chunk of every file — in one call. No request body.
+The source files on disk are untouched; only the index is dropped. Irreversible,
+so the CLI (`myrag admin clear`) confirms before sending it. This is the supported
+reset after switching to an embedding model with a different vector dimension,
+which Lucene can't apply to a live field.
+
+Response:
+
+```json
+{"removed_docs": 42, "removed_chunks": 137}
+```
+
+- `removed_docs` / `removed_chunks` — the index's contents just before the wipe.
 
 ### POST /query
 

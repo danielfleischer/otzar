@@ -60,7 +60,8 @@
     (updateDocuments keyed on doc_id). Standalone deletion is delete-by-paths!,
     which the prune path uses to drop chunks for source files removed/renamed on
     disk (todo.org #8); reclaim-deletes! then expunges them so the term-dictionary
-    reads (paths, stats) stop counting the removed files."
+    reads (paths, stats) stop counting the removed files. clear! wipes the whole
+    index in one call (deleteAll) — the full reset behind `myrag admin clear`."
   (:import [org.apache.lucene.store FSDirectory]
            [org.apache.lucene.index IndexWriter IndexWriterConfig MultiTerms Term
             VectorSimilarityFunction]
@@ -152,6 +153,21 @@
   is an occasional-maintenance cost (the prune path), not something for a hot path."
   [{:keys [^IndexWriter writer ^SearcherManager manager]}]
   (.forceMergeDeletes writer true)
+  (.commit writer)
+  (.maybeRefreshBlocking manager))
+
+(defn clear!
+  "component -> nil
+  Delete every document in the index, then commit and refresh so the wipe is
+  durable and paths/stats immediately read empty. Unlike delete-by-paths! (which
+  marks selected docs deleted), deleteAll drops *all* segments — which also clears
+  the per-field state their FieldInfos carry, including the `embedding` field's
+  vector dimension. That makes this the supported reset for an embedding-model
+  *dimension* change, which a live index can't otherwise accept (a
+  KnnFloatVectorField's dimension is fixed once the field exists): clear, then
+  re-index at the new dimension."
+  [{:keys [^IndexWriter writer ^SearcherManager manager]}]
+  (.deleteAll writer)
   (.commit writer)
   (.maybeRefreshBlocking manager))
 
