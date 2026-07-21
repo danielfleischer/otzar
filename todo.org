@@ -22,5 +22,8 @@
    =list_indexed_paths= / stats stop counting them. =--dry-run= previews; renames surface as an orphan at the old path.
 8. [X] Dimension-change detection — currently surfaces as a cryptic Lucene throw rather than a clean "run clear-index"
    message.
-9. [ ] Adding CLI sub-verbs to make it nicer.
-10. [ ] Schema versioning and reindex upon bump. 
+9. [X] Adding CLI sub-verbs to make it nicer.
+10. [ ] Schema versioning and reindex upon bump.
+11. [ ] Make the documentation consistent.
+12. [ ] Maybe a better name?
+13. [ ] Improve the README.
