@@ -250,8 +250,10 @@ myrag server start                   # boot the server (background JVM process)
 myrag server stop                    # POST /shutdown, then verify exit
 myrag server status                  # GET /health and /stats
 myrag index <path> [--recursive]     # POST /index
-myrag reindex [<path>]               # POST /reindex
-myrag rm <path>                      # DELETE /index
+myrag admin stats                    # GET /stats — index size (docs, chunks)
+myrag admin prune [--dry-run]        # POST /prune — drop orphaned files
+myrag admin clear [--yes]            # DELETE /index — wipe the whole index
+myrag admin reindex [--yes]          # re-embed indexed paths via POST /index (force)
 myrag query "..." [--k N] [--ext md,txt] [--mode hybrid|vector|keyword]
 myrag query "..." --json             # raw JSON output for piping
 myrag completion {bash|zsh|fish|powershell}   # emit completion script

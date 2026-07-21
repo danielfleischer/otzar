@@ -15,7 +15,7 @@ Status legend: ✅ implemented · ⬜ planned (milestone in parens).
 | POST   | `/index`        | ✅     | `{paths, recursive}` → `{indexed, ...}`; incremental — re-run to skip unchanged files and replace changed ones                         |
 | POST   | `/query`        | ✅     | `{q, k, mode, filters, fusion}` → `{hits}`; `mode` hybrid (default)/keyword/vector                                                     |
 | GET    | `/document/:id` | ✅     | `id` is a `doc_id` (whole file) or a chunk `id`; 404 if unknown                                                                        |
-| POST   | `/reindex`      | ⬜     | Unscheduled — `POST /index` is already incremental, so a separate verb only earns its keep as a "force re-embed unchanged" flag        |
+| POST   | `/reindex`      | ⬜     | Not needed — `myrag admin reindex` re-embeds the indexed paths via `POST /index` with `force`, so no dedicated endpoint                |
 | DELETE | `/index`        | ✅     | Wipe the whole index → `{removed_docs, removed_chunks}`; the supported reset after an embedding-dimension change (`myrag admin clear`) |
 | POST   | `/prune`        | ✅     | `{dry_run}` → `{removed, kept}`; drop chunks for source files gone from disk                                                           |
 

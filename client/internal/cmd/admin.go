@@ -7,12 +7,12 @@ import "github.com/spf13/cobra"
 // bare prints the subcommand help.
 var adminCmd = &cobra.Command{
 	Use:   "admin",
-	Short: "Index maintenance (stats, prune, clear)",
+	Short: "Index maintenance (stats, prune, clear, reindex)",
 	Long: `Maintenance operations on the index itself: report its size, reconcile it
-against disk, and clear it. These are run occasionally, apart from the everyday
-index/query verbs.`,
+against disk, clear it, and rebuild it after a chunker/model change. These are run
+occasionally, apart from the everyday index/query verbs.`,
 }
 
 func init() {
-	adminCmd.AddCommand(statsCmd, pruneCmd, clearCmd)
+	adminCmd.AddCommand(statsCmd, pruneCmd, clearCmd, reindexCmd)
 }
