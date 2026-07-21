@@ -20,13 +20,13 @@ server-deps: ## Pre-fetch the server's JVM dependencies
 	cd server && clojure -P
 
 run: build ## Build the client and start the server
-	./bin/myrag start
+	./bin/myrag server start
 
 stop: ## Stop the server
-	./bin/myrag stop
+	./bin/myrag server stop
 
 status: ## Show server status
-	./bin/myrag status
+	./bin/myrag server status
 
 test: test-client test-server ## Run all tests
 
@@ -40,6 +40,6 @@ clean: ## Remove build artifacts
 	rm -rf bin
 
 clear-index: ## Stop the server if running, then delete the on-disk index (~/.myrag/index)
-	@./bin/myrag stop 2>/dev/null || true
+	@./bin/myrag server stop 2>/dev/null || true
 	rm -rf ~/.myrag/index
 	@echo "index cleared"

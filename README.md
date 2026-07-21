@@ -29,9 +29,9 @@ Next: **M1** — keyword-only indexing end to end (`/index`, `/query?mode=keywor
 make build          # compile the client -> bin/myrag
 make server-deps    # one-time: pre-fetch JVM deps (optional, speeds first start)
 
-./bin/myrag start   # boot the server (background JVM)
-./bin/myrag status  # health + index stats
-./bin/myrag stop    # graceful shutdown
+./bin/myrag server start   # boot the server (background JVM)
+./bin/myrag server status  # health + index stats
+./bin/myrag server stop    # graceful shutdown
 ```
 
 The client locates the server source via `<repo>/server` (or `$MYRAG_SERVER_DIR`).

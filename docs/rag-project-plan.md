@@ -246,9 +246,9 @@ score-based fusion — we can revisit if RRF results feel off.
 ## 7. Client (Go + Cobra) — commands
 
 ```
-myrag start                          # boot the server (background JVM process)
-myrag stop                           # POST /shutdown, then verify exit
-myrag status                         # GET /health and /stats
+myrag server start                   # boot the server (background JVM process)
+myrag server stop                    # POST /shutdown, then verify exit
+myrag server status                  # GET /health and /stats
 myrag index <path> [--recursive]     # POST /index
 myrag reindex [<path>]               # POST /reindex
 myrag rm <path>                      # DELETE /index
@@ -460,7 +460,7 @@ When the host disconnects (stdin EOF):
 
 1. Exit cleanly.
 2. **Do not** stop the Clojure server — it may be in use by the CLI or another MCP
-   session. Server lifecycle stays under explicit user control via `myrag stop`.
+   session. Server lifecycle stays under explicit user control via `myrag server stop`.
 
 ### 13.5 Host configuration (example)
 
