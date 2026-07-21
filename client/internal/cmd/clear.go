@@ -1,10 +1,8 @@
 package cmd
 
 import (
-	"bufio"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -38,7 +36,14 @@ skip the prompt (e.g. in scripts).`,
 		}
 
 		if !clearYes {
-			ok, err := confirmClear(c)
+			s, err := c.Stats()
+			if err != nil {
+				return err
+			}
+			prompt := fmt.Sprintf(
+				"This will delete all %d files (%d chunks) from the index. This cannot be undone.\nType 'yes' to continue: ",
+				s.NumDocs, s.NumChunks)
+			ok, err := confirm(prompt, true)
 			if err != nil {
 				return err
 			}
@@ -61,24 +66,6 @@ skip the prompt (e.g. in scripts).`,
 		})
 		return nil
 	},
-}
-
-// confirmClear shows what will be wiped and reads a yes/no from the terminal. The
-// prompt goes to stderr so a --json stdout stays clean. Refuses (rather than
-// hanging on a pipe) when stdin isn't interactive — the caller should pass --yes.
-func confirmClear(c *api.Client) (bool, error) {
-	if !isTerminal(os.Stdin) {
-		return false, fmt.Errorf("refusing to clear without confirmation; pass --yes to skip the prompt")
-	}
-	s, err := c.Stats()
-	if err != nil {
-		return false, err
-	}
-	fmt.Fprintf(os.Stderr, "This will delete all %d files (%d chunks) from the index. This cannot be undone.\n",
-		s.NumDocs, s.NumChunks)
-	fmt.Fprint(os.Stderr, "Type 'yes' to continue: ")
-	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-	return strings.TrimSpace(line) == "yes", nil
 }
 
 func init() {
