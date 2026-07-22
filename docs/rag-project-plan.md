@@ -108,8 +108,10 @@ runtime or PyInstaller bundle).
 - The embedder boundary in the server is a single namespace (`rag.embed`) —
   swapping to in-process DJL or ONNX later is a one-day refactor, not an
   architectural redo.
-- Default model: `embeddinggemma` (768-dim, runs on CPU). Override via the
-  `MYRAG_EMBED_MODEL` env var; the Ollama URL via `OLLAMA_URL`.
+- Default model: `bge-m3` (1024-dim, runs on CPU). Chosen for its strong
+  multilingual coverage — in particular it embeds Hebrew well, which most small
+  English-first embedding models do not. Override via the `MYRAG_EMBED_MODEL` env
+  var; the Ollama URL via `OLLAMA_URL`.
 
 Alternatives kept in mind:
 - **DJL** with `sentence-transformers/all-MiniLM-L6-v2` — in-process, no sidecar; pick
@@ -159,7 +161,7 @@ the sidecar only if standalone-sentence quality (not chunking) ever matters.
 | `mtime`        | `LongPoint` + stored              | Last modified, for filtering     |
 | `chunk_idx`    | `IntPoint` + stored               | Position in source doc           |
 | `text`         | `TextField` (stored, indexed)     | Chunk text (BM25 keyword search) |
-| `embedding`    | `KnnFloatVectorField` (cosine)    | Dense vector (768-dim)           |
+| `embedding`    | `KnnFloatVectorField` (cosine)    | Dense vector (1024-dim, `bge-m3`)|
 | `tags`         | `StringField` multi-valued        | User tags (future)               |
 
 ### 4.2 Document store
@@ -274,47 +276,48 @@ build/dependency file and they only communicate through the HTTP API. The shared
 contract (request/response shapes) lives in `docs/api.md` at the repo root and is
 the source of truth for both sides.
 
+The tree below reflects the actual layout. It landed flatter than the original
+design sketched here: embedding is a single `embed.clj` (Ollama only, no protocol
+split yet); indexing orchestration is `index.clj` over an `index/` subdir; and
+only the hybrid retriever got its own namespace (`query/hybrid.clj` folds in the
+keyword and vector paths). Segmentation uses the JDK `BreakIterator`, so there is
+no OpenNLP model resource.
+
 ```
 rag/
 ├── README.md
 ├── docs/
-│   └── api.md                      # HTTP contract — shared source of truth
+│   ├── api.md                      # HTTP contract — shared source of truth
+│   └── rag-project-plan.md         # this document
 ├── server/                         # Clojure server, JVM
 │   ├── deps.edn
 │   ├── src/rag/
 │   │   ├── main.clj                # entry point, CLI args, server bootstrap
 │   │   ├── http.clj                # Ring handlers, routing
+│   │   ├── index.clj               # indexing orchestration (walk → chunk → embed → write)
 │   │   ├── index/
 │   │   │   ├── lucene.clj          # open/close writer & searcher, schema
 │   │   │   ├── walker.clj          # filesystem traversal, mime sniffing
 │   │   │   ├── extractor.clj       # text extraction per file type
-│   │   │   ├── segmenter.clj       # OpenNLP sentence detection
-│   │   │   ├── chunker.clj         # sentence packing + overlap
-│   │   │   └── store.clj           # source manifest side-table
-│   │   ├── embed/
-│   │   │   ├── protocol.clj        # Embedder protocol — swap-point
-│   │   │   ├── ollama.clj          # default impl (HTTP sidecar)
-│   │   │   └── djl.clj             # (later) in-process impl
+│   │   │   ├── segmenter.clj       # sentence detection (JDK BreakIterator)
+│   │   │   └── chunker.clj         # sentence packing + overlap
+│   │   ├── embed.clj               # Ollama embedding client (HTTP sidecar)
 │   │   ├── query/
-│   │   │   ├── vector.clj          # kNN with filter
-│   │   │   ├── keyword.clj         # BM25 with filter
-│   │   │   └── hybrid.clj          # RRF fusion
+│   │   │   └── hybrid.clj          # keyword (BM25) + vector (kNN) + RRF fusion
 │   │   └── config.clj
-│   └── resources/
-│       └── opennlp/en-sent.bin
+│   └── test/rag/                   # chunker, lucene, segmenter, walker, hybrid
 └── client/                         # Go + Cobra CLI
     ├── go.mod
     ├── go.sum
-    ├── main.go                     # cobra root command, version, completion
+    ├── main.go                     # entry point
     └── internal/
         ├── cmd/                    # one file per subcommand
-        │   ├── start.go
-        │   ├── stop.go
-        │   ├── status.go
+        │   ├── root.go             # cobra root command, completion
+        │   ├── server.go           # `server` group: start.go, stop.go, status.go
         │   ├── index.go
-        │   ├── reindex.go
-        │   ├── rm.go
         │   ├── query.go
+        │   ├── admin.go            # `admin` group: stats.go, prune.go, clear.go, reindex.go
+        │   ├── confirm.go          # shared destructive-op prompt
         │   └── mcp.go              # `myrag mcp` — MCP-over-stdio adapter
         ├── lifecycle/              # PID & port files, process spawn, signals
         │   └── lifecycle.go
@@ -385,8 +388,10 @@ A rough sequence — each milestone is independently runnable and demoable.
 
 ## 11. Open questions to resolve before / during M0
 
-- Embedding dimension — pin to 768 (`nomic-embed-text`) or stay configurable from
-  day one? Configurable is cheap if we record the dim in the manifest.
+- Embedding dimension — pin a dimension or stay configurable from day one?
+  Resolved: the model is configurable via `MYRAG_EMBED_MODEL`, defaulting to
+  `bge-m3` (1024-dim). The index inherits the dimension of the configured model;
+  changing models requires a clear + reindex.
 - Single index vs. per-collection indexes. Default to single; revisit if cross-corpus
   isolation matters.
 - Ollama lifecycle — does the client also start Ollama, or assume the user runs it?
