@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,22 @@ import (
 
 	"myrag/internal/lifecycle"
 )
+
+// serverError turns a non-2xx response into a Go error. The server sends JSON
+// {"error": "...", "data": {...}} for handled failures (rag.http/with-errors), so
+// we surface that message verbatim — it may be multi-line and carry remediation
+// steps (e.g. the dimension-mismatch guidance to run `myrag admin clear` then
+// re-index). Anything not in that shape (a proxy error, a raw stack) falls back to
+// the method/status/body so nothing is silently swallowed.
+func serverError(method, path, status string, body []byte) error {
+	var e struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(body, &e) == nil && e.Error != "" {
+		return errors.New(e.Error)
+	}
+	return fmt.Errorf("%s %s: %s: %s", method, path, status, string(body))
+}
 
 // Client talks to the running server. Its base URL is resolved from the port
 // file the server publishes, so a Client is only valid while a server is up.
@@ -44,7 +61,7 @@ func (c *Client) getJSON(path string, out any) error {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("GET %s: %s: %s", path, resp.Status, string(body))
+		return serverError("GET", path, resp.Status, body)
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
 }
@@ -63,7 +80,7 @@ func (c *Client) postJSON(path string, body, out any) error {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("POST %s: %s: %s", path, resp.Status, string(b))
+		return serverError("POST", path, resp.Status, b)
 	}
 	if out == nil {
 		return nil
@@ -83,7 +100,7 @@ func (c *Client) deleteJSON(path string, out any) error {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("DELETE %s: %s: %s", path, resp.Status, string(b))
+		return serverError("DELETE", path, resp.Status, b)
 	}
 	if out == nil {
 		return nil
@@ -125,7 +142,7 @@ func (c *Client) IndexStream(req IndexRequest, onEvent func(IndexEvent)) (*Index
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("POST /index: %s: %s", resp.Status, string(b))
+		return nil, serverError("POST", "/index", resp.Status, b)
 	}
 
 	sc := bufio.NewScanner(resp.Body)

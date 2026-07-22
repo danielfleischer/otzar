@@ -195,6 +195,17 @@
   (some (fn [[k v]] (when (str/ends-with? (name k) ".embedding_length") v))
         (:model_info (ollama-show model))))
 
+(defn embedding-dim
+  "-> long | nil
+  The embedding dimension the *currently configured* model produces, per Ollama's
+  /api/show metadata, or nil when Ollama doesn't report it (or is unreachable).
+  Lets rag.index detect a model dimension change against the index up front —
+  before embedding a whole tree — since Lucene can't mix vector dimensions in one
+  field. Best-effort by design: a nil just means the pre-check is skipped and any
+  real mismatch surfaces at the Lucene write instead."
+  []
+  (model-dim config/embed-model))
+
 (defn model-spec
   "-> str
   A stable identity for the *currently configured* embedding model, stored on each

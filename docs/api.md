@@ -155,3 +155,11 @@ file is no longer readable on disk.
 Handlers return `{"error": "<message>"}` (sometimes with a `"data"` object) and a
 non-200 status: `400` for bad requests (missing `q`/`paths`, unsupported `mode`),
 `500` for server-side failures.
+
+A dimension change is detected up front rather than failing deep in Lucene: when
+the configured embedding model's vector dimension differs from what the index
+already holds, `/query` (vector/hybrid) returns `400` with
+`{"error": "...", "data": {"type": "dimension-mismatch", "indexed": N, "configured": M}}`,
+and `/index` emits a terminal `{"type": "error", "error": "..."}` stream event. The
+message names the fix (`myrag admin clear`, then re-index). It is a no-op on a
+fresh/keyword-only index or when Ollama doesn't report the model's dimension.

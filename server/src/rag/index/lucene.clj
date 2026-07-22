@@ -63,8 +63,8 @@
     reads (paths, stats) stop counting the removed files. clear! wipes the whole
     index in one call (deleteAll) — the full reset behind `myrag admin clear`."
   (:import [org.apache.lucene.store FSDirectory]
-           [org.apache.lucene.index IndexWriter IndexWriterConfig MultiTerms Term
-            VectorSimilarityFunction]
+           [org.apache.lucene.index IndexWriter IndexWriterConfig LeafReaderContext
+            MultiTerms Term VectorSimilarityFunction]
            [org.apache.lucene.document Document Field$Store StringField TextField
             LongPoint IntPoint StoredField NumericDocValuesField KnnFloatVectorField]
            [org.apache.lucene.analysis.standard StandardAnalyzer]
@@ -284,6 +284,25 @@
                 (KnnFloatVectorQuery. "embedding" qvec (int k) ^Query filter)
                 (KnnFloatVectorQuery. "embedding" qvec (int k)))
               k))
+
+(defn vector-dim
+  "component -> long | nil
+  The `embedding` field's vector dimension currently stored in the index, or nil
+  when no chunk carries a vector yet (a fresh or keyword-only index). Read from the
+  field metadata (FieldInfo) across the reader's leaves — cheap, no documents
+  scanned. A KnnFloatVectorField's dimension is fixed once the field exists, so
+  rag.index compares this against the configured model's dimension to fail fast on a
+  model change instead of writing (or querying with) a mismatched vector."
+  [{:keys [^SearcherManager manager]}]
+  (let [searcher (.acquire manager)]
+    (try
+      (some (fn [^LeafReaderContext ctx]
+              (when-let [fi (.fieldInfo (.getFieldInfos (.reader ctx)) "embedding")]
+                (let [d (.getVectorDimension fi)]
+                  (when (pos? d) d))))
+            (.leaves (.getIndexReader searcher)))
+      (finally
+        (.release manager searcher)))))
 
 (defn doc-meta
   "component, doc-id:str -> {:mtime long, :content_sha1 str, :model_spec str} | nil

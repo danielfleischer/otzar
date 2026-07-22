@@ -38,6 +38,31 @@
       (do (.mkdirs config/index-dir)
           (swap! component (fn [c] (or c (lucene/open config/index-dir)))))))
 
+(defn- dim-mismatch-message [indexed configured]
+  (str "Embedding dimension changed: the index holds " indexed "-dim vectors but "
+       "the configured model now produces " configured "-dim. Lucene can't mix "
+       "vector dimensions in one field, so switching embedding models needs a full "
+       "re-index:\n"
+       "  myrag admin clear\n"
+       "  myrag index <paths…>"))
+
+(defn- ensure-dim!
+  "Fail fast when the index already holds vectors of a different dimension than
+  `want` (the dimension the configured model produces now). A KnnFloatVectorField's
+  dimension is fixed once the field exists, so a model change to a new dimension
+  can't be applied in place — it needs a clear + re-index. Throws an ex-info
+  {:type :dimension-mismatch} whose message spells out the commands (the HTTP layer
+  maps it to a 400 for /query and an error event for /index; the CLI prints it).
+  No-op on an empty/keyword-only index (nothing to conflict with) or when `want` is
+  nil (dimension unknown — then a real mismatch still surfaces at the Lucene write,
+  just less prettily)."
+  [component want]
+  (when want
+    (when-let [have (lucene/vector-dim component)]
+      (when (not= (long have) (long want))
+        (throw (ex-info (dim-mismatch-message have want)
+                        {:type :dimension-mismatch :indexed have :configured want}))))))
+
 (defn- sha1 [^String s]
   (let [md (MessageDigest/getInstance "SHA-1")]
     (->> (.digest md (.getBytes s "UTF-8"))
@@ -164,6 +189,7 @@
   ([paths opts cancelled?] (index-paths! paths opts cancelled? (fn [_])))
   ([paths {:keys [recursive force] :or {recursive true}} cancelled? on-progress]
    (let [idx    (ensure!)
+         _      (ensure-dim! idx (embed/embedding-dim))  ; refuse a dim change before any embedding work
          spec   (embed/model-spec)  ; one Ollama metadata probe per run; stamped on every chunk
          files  (distinct (mapcat #(walker/walk % {:recursive recursive}) paths))
          _      (on-progress {:type "start" :total (count files)})
@@ -276,11 +302,18 @@
         k-each (get fusion :k_each 50)]
     {:hits (case mode
              "keyword" (lucene/keyword-search comp q k filt)
-             "vector"  (lucene/vector-search comp (embed/embed-query q) k filt)
-             "hybrid"  (hybrid/fuse
-                        (lucene/keyword-search comp q k-each filt)
-                        (lucene/vector-search comp (embed/embed-query q) k-each filt)
-                        k)
+             ;; Embed once, then check the query vector's own length against the
+             ;; index dimension — authoritative and Ollama-free (no /api/show on the
+             ;; hot path) — before kNN, which would otherwise throw a raw Lucene error.
+             "vector"  (let [qvec (embed/embed-query q)]
+                         (ensure-dim! comp (alength ^floats qvec))
+                         (lucene/vector-search comp qvec k filt))
+             "hybrid"  (let [qvec (embed/embed-query q)]
+                         (ensure-dim! comp (alength ^floats qvec))
+                         (hybrid/fuse
+                          (lucene/keyword-search comp q k-each filt)
+                          (lucene/vector-search comp qvec k-each filt)
+                          k))
              (throw (ex-info (str "mode \"" mode "\" not supported (have: keyword, vector, hybrid)")
                              {:type :unsupported-mode :mode mode})))}))
 
