@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"myrag/internal/lifecycle"
+	"otzer/internal/lifecycle"
 )
 
 var startTimeout time.Duration

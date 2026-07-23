@@ -79,7 +79,7 @@
                  (select-keys (ex-data ex) [:indexed :configured])))
           ;; the message must tell the user exactly what to run
           (is (re-find #"admin clear" (.getMessage ex)))
-          (is (re-find #"myrag index" (.getMessage ex))))))
+          (is (re-find #"otzer index" (.getMessage ex))))))
     (testing "matching dimension -> no-op"
       (with-redefs [lucene/vector-dim (constantly 1024)]
         (is (nil? (ensure-dim! :comp 1024)))))

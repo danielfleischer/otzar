@@ -1,6 +1,6 @@
 package main
 
-import "myrag/internal/cmd"
+import "otzer/internal/cmd"
 
 func main() {
 	cmd.Execute()

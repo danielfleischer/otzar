@@ -2,7 +2,7 @@
 
 This is the source of truth shared by the Clojure server (`server/`) and the Go
 client (`client/`). They communicate only over HTTP+JSON on `127.0.0.1` at the
-port the server publishes to `~/.myrag/server.port`.
+port the server publishes to `~/.otzer/server.port`.
 
 Status legend: ✅ implemented · ⬜ planned (milestone in parens).
 
@@ -15,11 +15,11 @@ Status legend: ✅ implemented · ⬜ planned (milestone in parens).
 | POST   | `/index`        | ✅     | `{paths, recursive}` → `{indexed, ...}`; incremental — re-run to skip unchanged files and replace changed ones                         |
 | POST   | `/query`        | ✅     | `{q, k, mode, filters, fusion}` → `{hits}`; `mode` hybrid (default)/keyword/vector                                                     |
 | GET    | `/document/:id` | ✅     | `id` is a `doc_id` (whole file) or a chunk `id`; 404 if unknown                                                                        |
-| POST   | `/reindex`      | ⬜     | Not needed — `myrag admin reindex` re-embeds the indexed paths via `POST /index` with `force`, so no dedicated endpoint                |
-| DELETE | `/index`        | ✅     | Wipe the whole index → `{removed_docs, removed_chunks}`; the supported reset after an embedding-dimension change (`myrag admin clear`) |
+| POST   | `/reindex`      | ⬜     | Not needed — `otzer admin reindex` re-embeds the indexed paths via `POST /index` with `force`, so no dedicated endpoint                |
+| DELETE | `/index`        | ✅     | Wipe the whole index → `{removed_docs, removed_chunks}`; the supported reset after an embedding-dimension change (`otzer admin clear`) |
 | POST   | `/prune`        | ✅     | `{dry_run}` → `{removed, kept}`; drop chunks for source files gone from disk                                                           |
 
-## Lifecycle files (`~/.myrag/`)
+## Lifecycle files (`~/.otzer/`)
 
 - `server.port` — written by the **server** on boot (it binds an ephemeral port
   and records the actual one). Removed on clean shutdown. Its presence +
@@ -68,7 +68,7 @@ Response:
 
 Wipe the entire index — every chunk of every file — in one call. No request body.
 The source files on disk are untouched; only the index is dropped. Irreversible,
-so the CLI (`myrag admin clear`) confirms before sending it. This is the supported
+so the CLI (`otzer admin clear`) confirms before sending it. This is the supported
 reset after switching to an embedding model with a different vector dimension,
 which Lucene can't apply to a live field.
 
@@ -161,5 +161,5 @@ the configured embedding model's vector dimension differs from what the index
 already holds, `/query` (vector/hybrid) returns `400` with
 `{"error": "...", "data": {"type": "dimension-mismatch", "indexed": N, "configured": M}}`,
 and `/index` emits a terminal `{"type": "error", "error": "..."}` stream event. The
-message names the fix (`myrag admin clear`, then re-index). It is a no-op on a
+message names the fix (`otzer admin clear`, then re-index). It is a no-op on a
 fresh/keyword-only index or when Ollama doesn't report the model's dimension.

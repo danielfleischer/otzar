@@ -7,7 +7,7 @@ server/target/
 server/.nrepl-port
 
 # Go
-client/myrag
+client/otzer
 
 # Editor / tooling caches
 .clj-kondo

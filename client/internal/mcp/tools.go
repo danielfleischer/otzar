@@ -5,7 +5,7 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"myrag/internal/api"
+	"otzer/internal/api"
 )
 
 // The tool input/output types below double as the tools' JSON Schemas: the SDK

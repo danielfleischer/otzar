@@ -7,8 +7,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"myrag/internal/api"
-	"myrag/internal/render"
+	"otzer/internal/api"
+	"otzer/internal/render"
 )
 
 var (
@@ -27,11 +27,11 @@ re-index it re-embeds every file even when nothing changed.
 Reach for it after a change the incremental index can't detect on its own: a new
 chunker, a chunk-schema field, or a switch to a different embedding model of the
 same vector dimension. A change in embedding *dimension* can't be applied in
-place — run 'myrag admin clear' first, then index.
+place — run 'otzer admin clear' first, then index.
 
 Re-embedding calls the embedder for every chunk and can take a while, so reindex
 confirms first; pass --yes to skip. Files deleted from disk since indexing are
-skipped silently (use 'myrag admin prune' to drop them).`,
+skipped silently (use 'otzer admin prune' to drop them).`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Re-embedding a whole index is slow; match index's generous budget.

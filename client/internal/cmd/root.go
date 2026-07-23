@@ -8,12 +8,12 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:           "myrag",
+	Use:           "otzer",
 	Short:         "Hybrid local document search (vector + keyword + metadata)",
-	Long: `myrag is the CLI for a personal hybrid retrieval system.
+	Long: `otzer is the CLI for a personal hybrid retrieval system.
 
 It controls the lifecycle of a local Clojure/Lucene server and queries it over
-HTTP. The same binary also speaks MCP (` + "`myrag mcp`" + `) so LLM hosts can search
+HTTP. The same binary also speaks MCP (` + "`otzer mcp`" + `) so LLM hosts can search
 your index as a tool.`,
 	SilenceUsage:  true,
 	SilenceErrors: true,

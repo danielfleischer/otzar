@@ -1,6 +1,6 @@
 # Open-source release plan
 
-Working checklist toward publishing `myrag`. Grouped by theme, roughly ordered
+Working checklist toward publishing `otzer`. Grouped by theme, roughly ordered
 by what blocks a public release vs. what can follow. Findings from the
 pre-release review (see session notes); `docs/api.md` was found accurate and is
 the source of truth — leave it as-is.
@@ -39,9 +39,15 @@ the source of truth — leave it as-is.
 
 - [ ] `CONTRIBUTING.md` (build, test, how the two toolchains fit together).
 - [ ] CI workflow — build + test both `server/` (Clojure) and `client/` (Go).
-- [x] README section on shell-completion install (`myrag completion fish | source`).
-- [ ] Decide on the name (`myrag` is fine but generic) — rename before stars land,
-      not after.
+- [x] README section on shell-completion install (`otzer completion fish | source`).
+- [x] Decide on the name. Renamed `myrag` → **`otzer`** (אוֹצֵר, Hebrew for
+      *curator*; cf. *otzar*, treasure/thesaurus). Renamed with it: the binary, the
+      Go module path, the `MYRAG_*` env vars → `OTZER_*`, the `myrag.nrepl` system
+      property, and the state dir `~/.myrag` → `~/.otzer`. The Clojure namespaces
+      stay `rag.*` (internal and generic) and the repo checkout dir is unchanged.
+      Note for existing installs: the state dir move orphans the old index — either
+      `mv ~/.myrag ~/.otzer` or clear and re-index, and delete the stale
+      `~/.local/bin/myrag`.
 
 ## 3. Test coverage gaps
 
@@ -72,6 +78,6 @@ Not release blockers, but worth tracking as the public roadmap:
 
 - No tracked file contains personal paths, emails, or secrets. `.clj-kondo`
   cache (which has hardcoded `/Users/...` paths) is gitignored, not tracked.
-- Paths derive from `user.home` → `~/.myrag/`; nothing machine-specific baked in.
+- Paths derive from `user.home` → `~/.otzer/`; nothing machine-specific baked in.
 - Local-only / single-user / no-auth is a documented design decision, not a gap.
 - `docs/api.md` matches the actual routes exactly.

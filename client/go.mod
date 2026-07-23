@@ -1,4 +1,4 @@
-module myrag
+module otzer
 
 go 1.26
 

@@ -21,7 +21,7 @@
   "Directory names never descended into during a recursive walk."
   #{".git" ".hg" ".svn" "node_modules" "target" "dist" "build" "out"
     ".clj-kondo" ".lsp" ".cpcache" "__pycache__" ".idea" ".vscode"
-    ".gradle" ".mvn" "vendor" ".myrag"})
+    ".gradle" ".mvn" "vendor" ".otzer"})
 
 (defn ext
   "File -> str | nil

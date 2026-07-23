@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"myrag/internal/api"
-	"myrag/internal/render"
+	"otzer/internal/api"
+	"otzer/internal/render"
 )
 
 var (

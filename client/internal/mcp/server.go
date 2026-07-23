@@ -1,4 +1,4 @@
-// Package mcp is the `myrag mcp` adapter: an MCP server (over stdio) whose tools
+// Package mcp is the `otzer mcp` adapter: an MCP server (over stdio) whose tools
 // proxy into the running Clojure server's HTTP API. It's read-only by design —
 // search, get_document, list_indexed_paths — so an LLM host can find and read the
 // user's documents but not mutate the index (plan §13).
@@ -11,15 +11,15 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"myrag/internal/api"
+	"otzer/internal/api"
 )
 
 const version = "0.1.0"
 
 // NewServer builds the MCP server with the three read-only tools, each proxying
-// to the myrag HTTP server via c.
+// to the otzer HTTP server via c.
 func NewServer(c *api.Client) *mcpsdk.Server {
-	s := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "myrag", Version: version}, nil)
+	s := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "otzer", Version: version}, nil)
 	addSearch(s, c)
 	addGetDocument(s, c)
 	addListIndexedPaths(s, c)

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"myrag/internal/api"
+	"otzer/internal/api"
 )
 
 // Drives the multi-line bar through two files embedding concurrently, checks that

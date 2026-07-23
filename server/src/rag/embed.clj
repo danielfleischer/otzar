@@ -105,7 +105,7 @@
 
 ;; bge-m3 is symmetric — documents and queries are embedded as raw text, no task
 ;; prompts. (Some models, e.g. EmbeddingGemma, need asymmetric document/query
-;; prompts for the two vector spaces to line up; if MYRAG_EMBED_MODEL changes to
+;; prompts for the two vector spaces to line up; if OTZER_EMBED_MODEL changes to
 ;; such a model, reintroduce per-side prompting in embed-documents/embed-query.)
 
 (defn- embed-prepared

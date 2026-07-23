@@ -13,8 +13,8 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"myrag/internal/api"
-	"myrag/internal/mcp"
+	"otzer/internal/api"
+	"otzer/internal/mcp"
 )
 
 // stubServer stands in for the Clojure HTTP server, returning canned bodies for
@@ -61,7 +61,7 @@ func clientFor(t *testing.T, ts *httptest.Server) *api.Client {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	port := mustPort(t, ts.URL)
-	dir := filepath.Join(home, ".myrag")
+	dir := filepath.Join(home, ".otzer")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}

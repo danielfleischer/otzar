@@ -11,13 +11,13 @@ import (
 	"net/url"
 	"time"
 
-	"myrag/internal/lifecycle"
+	"otzer/internal/lifecycle"
 )
 
 // serverError turns a non-2xx response into a Go error. The server sends JSON
 // {"error": "...", "data": {...}} for handled failures (rag.http/with-errors), so
 // we surface that message verbatim — it may be multi-line and carry remediation
-// steps (e.g. the dimension-mismatch guidance to run `myrag admin clear` then
+// steps (e.g. the dimension-mismatch guidance to run `otzer admin clear` then
 // re-index). Anything not in that shape (a proxy error, a raw stack) falls back to
 // the method/status/body so nothing is silently swallowed.
 func serverError(method, path, status string, body []byte) error {

@@ -8,10 +8,10 @@ import (
 )
 
 // TestResolveServerDirBaked verifies the build-time-baked serverDir is used as a
-// fallback: with MYRAG_SERVER_DIR unset and no ./server in the working dir, the
+// fallback: with OTZER_SERVER_DIR unset and no ./server in the working dir, the
 // baked path (validated by its deps.edn) is returned.
 func TestResolveServerDirBaked(t *testing.T) {
-	t.Setenv("MYRAG_SERVER_DIR", "")
+	t.Setenv("OTZER_SERVER_DIR", "")
 
 	// Run from a scratch cwd so the ./server/deps.edn check misses.
 	cwd, _ := os.Getwd()
@@ -41,7 +41,7 @@ func TestResolveServerDirBaked(t *testing.T) {
 // startup: while one holder has it, a second acquisition blocks until timeout,
 // and once released it can be taken again.
 func TestStartLockMutualExclusion(t *testing.T) {
-	t.Setenv("HOME", t.TempDir()) // dir() -> $HOME/.myrag, so the lock is isolated
+	t.Setenv("HOME", t.TempDir()) // dir() -> $HOME/.otzer, so the lock is isolated
 	if err := os.MkdirAll(dir(), 0o700); err != nil {
 		t.Fatal(err)
 	}

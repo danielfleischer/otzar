@@ -6,9 +6,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"myrag/internal/api"
-	"myrag/internal/lifecycle"
-	"myrag/internal/render"
+	"otzer/internal/api"
+	"otzer/internal/lifecycle"
+	"otzer/internal/render"
 )
 
 var statusJSON bool

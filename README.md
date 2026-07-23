@@ -1,9 +1,12 @@
-# myrag
+# otzer
+
+*otzer* (אוֹצֵר) is Hebrew for **curator** — and its close cousin *otzar* (אוֹצָר)
+means *treasure* or *thesaurus*.
 
 A personal **hybrid retrieval system** — dense vector similarity + keyword (BM25)
 + metadata filters over your local files, in one query. A Clojure/Lucene server
 holds the index; a Go/Cobra CLI controls its lifecycle and is the primary UX. The
-same Go binary also speaks MCP (`myrag mcp`) so LLM hosts can search the index as
+same Go binary also speaks MCP (`otzer mcp`) so LLM hosts can search the index as
 a tool.
 
 See [`docs/rag-project-plan.md`](docs/rag-project-plan.md) for the full design and
@@ -22,26 +25,26 @@ single-user, no auth — by design.
   Clojure CLI.
 - Go ≥ 1.26.
 - [Ollama](https://ollama.com), for embeddings. Pull the default model with
-  `ollama pull bge-m3` (1024-dim); override with `MYRAG_EMBED_MODEL`. `bge-m3` is
+  `ollama pull bge-m3` (1024-dim); override with `OTZER_EMBED_MODEL`. `bge-m3` is
   the default for its strong multilingual coverage — notably Hebrew, which most
   small English-first embedding models handle poorly.
 
 ## Build & run
 
 ```sh
-make build          # compile the client -> bin/myrag
+make build          # compile the client -> bin/otzer
 make server-deps    # one-time: pre-fetch JVM deps (optional, speeds first start)
 ```
 
-The client locates the server source via `<repo>/server` (or `$MYRAG_SERVER_DIR`)
+The client locates the server source via `<repo>/server` (or `$OTZER_SERVER_DIR`)
 and boots the JVM on demand.
 
 ### Server lifecycle
 
 ```sh
-./bin/myrag server start    # boot the server (background JVM)
-./bin/myrag server status   # health + index stats
-./bin/myrag server stop     # graceful shutdown
+./bin/otzer server start    # boot the server (background JVM)
+./bin/otzer server status   # health + index stats
+./bin/otzer server stop     # graceful shutdown
 ```
 
 Most commands start the server automatically if it isn't running, so an explicit
@@ -50,9 +53,9 @@ Most commands start the server automatically if it isn't running, so an explicit
 ### Index
 
 ```sh
-./bin/myrag index notes.md report.pdf   # index individual files
-./bin/myrag index -r ~/notes            # descend into a directory
-./bin/myrag index -f ~/notes            # force re-embed even if unchanged
+./bin/otzer index notes.md report.pdf   # index individual files
+./bin/otzer index -r ~/notes            # descend into a directory
+./bin/otzer index -f ~/notes            # force re-embed even if unchanged
 ```
 
 Unchanged files are skipped on re-index. On a TTY you get a live per-file chunk
@@ -61,10 +64,10 @@ progress view; add `-j/--json` for machine-readable output.
 ### Query
 
 ```sh
-./bin/myrag query "vector database tradeoffs"          # hybrid (default)
-./bin/myrag query -m keyword "exact phrase"            # BM25 only
-./bin/myrag query -m vector "semantically similar"     # kNN only
-./bin/myrag query -k 5 -e md,txt -p ~/notes/ "topic"   # top-5, filtered
+./bin/otzer query "vector database tradeoffs"          # hybrid (default)
+./bin/otzer query -m keyword "exact phrase"            # BM25 only
+./bin/otzer query -m vector "semantically similar"     # kNN only
+./bin/otzer query -k 5 -e md,txt -p ~/notes/ "topic"   # top-5, filtered
 ```
 
 `--mode` picks the retriever (`hybrid` | `keyword` | `vector`); `--ext`, `--path`,
@@ -75,16 +78,16 @@ score breakdown.
 ### Admin (index maintenance)
 
 ```sh
-./bin/myrag admin stats     # documents and chunks in the index
-./bin/myrag admin prune     # drop indexed files that no longer exist on disk
-./bin/myrag admin clear     # wipe the entire index
-./bin/myrag admin reindex   # re-embed everything (after a chunker/model change)
+./bin/otzer admin stats     # documents and chunks in the index
+./bin/otzer admin prune     # drop indexed files that no longer exist on disk
+./bin/otzer admin clear     # wipe the entire index
+./bin/otzer admin reindex   # re-embed everything (after a chunker/model change)
 ```
 
 ### MCP
 
 ```sh
-./bin/myrag mcp             # speak MCP over stdio (launched by an LLM host)
+./bin/otzer mcp             # speak MCP over stdio (launched by an LLM host)
 ```
 
 `mcp` exposes read-only tools — `search`, `get_document`, `list_indexed_paths` —
@@ -96,11 +99,11 @@ server automatically and leaves it running when the host disconnects.
 Cobra generates completion scripts for bash, zsh, fish, and PowerShell. For fish:
 
 ```sh
-./bin/myrag completion fish | source                       # current shell
-./bin/myrag completion fish > ~/.config/fish/completions/myrag.fish   # persist
+./bin/otzer completion fish | source                       # current shell
+./bin/otzer completion fish > ~/.config/fish/completions/otzer.fish   # persist
 ```
 
-Run `myrag completion --help` for the other shells.
+Run `otzer completion --help` for the other shells.
 
 ## Layout
 
