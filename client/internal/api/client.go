@@ -3,12 +3,14 @@ package api
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"sync/atomic"
 	"time"
 
 	"otzer/internal/lifecycle"
@@ -30,11 +32,30 @@ func serverError(method, path, status string, body []byte) error {
 	return fmt.Errorf("%s %s: %s: %s", method, path, status, string(body))
 }
 
+// stallTimeout bounds how long a streaming response may go completely silent
+// before we give up on it. The server writes a heartbeat byte every two seconds
+// while indexing (rag.http/heartbeat-secs), so silence this long means it is
+// wedged, not merely busy — 30 missed heartbeats.
+//
+// This is deliberately *not* a cap on how long indexing may take. An
+// http.Client.Timeout covers the whole exchange including reading the body, so
+// using one here would kill a healthy multi-hour index run mid-stream with
+// "context deadline exceeded ... while reading body". Liveness is the thing worth
+// enforcing; total duration is the user's business.
+const stallTimeout = 60 * time.Second
+
 // Client talks to the running server. Its base URL is resolved from the port
 // file the server publishes, so a Client is only valid while a server is up.
+//
+// Deadlines differ by call shape, which is why they live here rather than on the
+// http.Client: unary calls get `timeout` as a total budget, while the streaming
+// index gets `stall` as a limit on silence (see IndexStream). A zero value for
+// either means "no deadline".
 type Client struct {
 	BaseURL string
 	http    *http.Client
+	timeout time.Duration
+	stall   time.Duration
 }
 
 // New builds a Client pointed at the currently running server, or errors if no
@@ -43,18 +64,39 @@ func New() (*Client, error) {
 	return NewWithTimeout(10 * time.Second)
 }
 
-// NewWithTimeout is New with an explicit per-request timeout. Indexing a large
-// tree can take a while, so the index command asks for a longer budget.
+// NewWithTimeout is New with an explicit total budget for unary (non-streaming)
+// requests. It does not bound IndexStream, which is governed by stallTimeout.
 func NewWithTimeout(d time.Duration) (*Client, error) {
 	base, err := lifecycle.BaseURL()
 	if err != nil {
 		return nil, fmt.Errorf("server not running (no port file): %w", err)
 	}
-	return &Client{BaseURL: base, http: &http.Client{Timeout: d}}, nil
+	return &Client{BaseURL: base, http: &http.Client{}, timeout: d, stall: stallTimeout}, nil
+}
+
+// request builds a unary request carrying the client's total deadline. The
+// caller must defer the returned cancel func, and may only do so once the
+// response body has been read — cancelling closes the body.
+func (c *Client) request(method, path string, body io.Reader) (*http.Request, context.CancelFunc, error) {
+	ctx, cancel := context.Background(), context.CancelFunc(func() {})
+	if c.timeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, c.timeout)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, body)
+	if err != nil {
+		cancel()
+		return nil, nil, err
+	}
+	return req, cancel, nil
 }
 
 func (c *Client) getJSON(path string, out any) error {
-	resp, err := c.http.Get(c.BaseURL + path)
+	req, cancel, err := c.request(http.MethodGet, path, nil)
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return err
 	}
@@ -73,7 +115,13 @@ func (c *Client) postJSON(path string, body, out any) error {
 			return err
 		}
 	}
-	resp, err := c.http.Post(c.BaseURL+path, "application/json", &buf)
+	req, cancel, err := c.request(http.MethodPost, path, &buf)
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return err
 	}
@@ -89,10 +137,11 @@ func (c *Client) postJSON(path string, body, out any) error {
 }
 
 func (c *Client) deleteJSON(path string, out any) error {
-	req, err := http.NewRequest(http.MethodDelete, c.BaseURL+path, nil)
+	req, cancel, err := c.request(http.MethodDelete, path, nil)
 	if err != nil {
 		return err
 	}
+	defer cancel()
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return err
@@ -126,16 +175,48 @@ func (c *Client) Stats() (*Stats, error) {
 	return &s, nil
 }
 
+// stallReader restarts a watchdog on every byte that arrives, so a stream is
+// judged on whether it is *moving* rather than on how long it has been running.
+// Reads, not lines, are what reset it: during one large file the server emits a
+// JSON line only per embed batch, but heartbeat bytes keep arriving throughout,
+// and those are the difference between "slow" and "dead".
+type stallReader struct {
+	r     io.Reader
+	timer *time.Timer
+	d     time.Duration
+}
+
+func (s *stallReader) Read(p []byte) (int, error) {
+	n, err := s.r.Read(p)
+	if n > 0 {
+		s.timer.Reset(s.d)
+	}
+	return n, err
+}
+
 // IndexStream posts to /index and consumes the NDJSON progress stream, invoking
 // onEvent for each "start"/"file" event (nil to ignore them) and returning the
 // terminal "result" summary. An "error" event becomes a Go error, as does a
 // stream that ends without a result.
+//
+// The run is bounded by silence (stallTimeout), never by total duration: indexing
+// a large tree legitimately takes hours, and the server heartbeats throughout, so
+// there is no honest reason to hang up on a stream that is still producing bytes.
+// If we do hang up, the server notices the closed socket and cancels the run,
+// keeping everything it had already committed.
 func (c *Client) IndexStream(req IndexRequest, onEvent func(IndexEvent)) (*IndexResult, error) {
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(req); err != nil {
 		return nil, err
 	}
-	resp, err := c.http.Post(c.BaseURL+"/index", "application/json", &buf)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/index", &buf)
+	if err != nil {
+		return nil, err
+	}
+	hreq.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(hreq)
 	if err != nil {
 		return nil, err
 	}
@@ -145,7 +226,22 @@ func (c *Client) IndexStream(req IndexRequest, onEvent func(IndexEvent)) (*Index
 		return nil, serverError("POST", "/index", resp.Status, b)
 	}
 
-	sc := bufio.NewScanner(resp.Body)
+	// Cancelling the request is what unblocks a wedged read, so the watchdog has to
+	// do that rather than just report — `stalled` then distinguishes our own
+	// hang-up from a genuine transport failure when the read fails.
+	var stalled atomic.Bool
+	body := io.Reader(resp.Body)
+	if c.stall > 0 {
+		watchdog := time.AfterFunc(c.stall, func() { stalled.Store(true); cancel() })
+		defer watchdog.Stop()
+		body = &stallReader{r: resp.Body, timer: watchdog, d: c.stall}
+	}
+	stallErr := func() error {
+		return fmt.Errorf("no progress from the server for %s — it stopped indexing when this "+
+			"connection dropped, but files already committed are kept; check `otzer server status`", c.stall)
+	}
+
+	sc := bufio.NewScanner(body)
 	// A "result" line with many per-file errors can be large; lift the line cap.
 	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 	var result *IndexResult
@@ -170,9 +266,15 @@ func (c *Client) IndexStream(req IndexRequest, onEvent func(IndexEvent)) (*Index
 		}
 	}
 	if err := sc.Err(); err != nil {
+		if stalled.Load() {
+			return nil, stallErr()
+		}
 		return nil, err
 	}
 	if result == nil {
+		if stalled.Load() {
+			return nil, stallErr()
+		}
 		return nil, fmt.Errorf("index stream ended without a result")
 	}
 	return result, nil

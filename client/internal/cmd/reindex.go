@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -34,8 +33,9 @@ confirms first; pass --yes to skip. Files deleted from disk since indexing are
 skipped silently (use 'otzer admin prune' to drop them).`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Re-embedding a whole index is slow; match index's generous budget.
-		c, err := api.NewWithTimeout(10 * time.Minute)
+		// Re-embedding a whole index is slow, but IndexStream is bounded by silence
+		// rather than by duration, so the default client is right here too.
+		c, err := api.New()
 		if err != nil {
 			return err
 		}

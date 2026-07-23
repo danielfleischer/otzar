@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -38,8 +37,9 @@ chunks to the local index. Directories are only descended with --recursive.`,
 			paths = append(paths, abs)
 		}
 
-		// Indexing can be slow on a large tree; give it a generous budget.
-		c, err := api.NewWithTimeout(10 * time.Minute)
+		// No total budget to set: IndexStream is bounded by silence, not duration,
+		// so a run of any length is fine as long as the server keeps talking.
+		c, err := api.New()
 		if err != nil {
 			return err
 		}
