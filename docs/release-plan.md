@@ -68,7 +68,16 @@ Not release blockers, but worth tracking as the public roadmap:
       is now detected up front and fails fast with the exact clear+reindex commands
       — `rag.index/ensure-dim!`, gating `/index` and vector/hybrid `/query` — rather
       than throwing a raw Lucene error. Auto-reindex on bump is still future.)
-- [ ] PDF/HTML extraction (plan M8, Tika). Currently plain-text/code/markdown only.
+- [ ] PDF/HTML/docx extraction (plan M8). Currently plain-text/code/markdown only.
+      (Partial: `rag.index.extractor` is now an open registry — one entry per
+      format declaring its extensions, extraction fn, and size ceiling — and
+      `walker` derives its accepted set from it, so adding a format is one
+      namespace plus one registry entry, with no second list to keep in sync.
+      Still open: per-format extraction itself, and generalizing the chunk's
+      `line_start/line_end` span into a tagged locator (`line` | `page` | `para`)
+      so PDFs cite pages and docx cites paragraphs. Leaning PDFBox for PDF and
+      plain `java.util.zip` over `word/document.xml` for docx rather than Tika —
+      the registry means neither has to be decided centrally.)
 - [ ] Tags — schema reserves a `tags` field but nothing populates or filters on it.
 - [ ] In-process embeddings (DJL/ONNX). Plan advertises Ollama as swappable; only
       the Ollama impl exists, so Ollama is currently a hard runtime dependency.

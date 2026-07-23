@@ -1,15 +1,42 @@
 (ns rag.index.extractor
-  "Text extraction per file. v1 (M1) handles plain-text and source files: read
-  the bytes as UTF-8 and return them as a String. Files that are empty, larger
-  than `max-bytes`, or that look binary (contain a NUL in their first bytes) are
-  skipped by returning nil. Richer extractors (PDF/HTML via Tika) are M8."
+  "Text extraction per file, dispatched by extension through an open registry.
+
+  `formats` is the registry: one map per format, declaring the extensions it
+  claims, the function that turns a File into a String, and (optionally) its own
+  size ceiling. `extract` looks up a file's extension, applies the shared guards,
+  and hands off to the format. Everything downstream of here (segmenter, chunker,
+  embed, lucene) is content-agnostic, so a new format is a local change.
+
+  To add one (e.g. PDF via PDFBox, docx via java.util.zip over word/document.xml):
+    1. Write the extraction fn — File -> str | nil — in its own namespace,
+       `rag.index.extract.<fmt>`.
+    2. Add a map to `formats` claiming its extensions.
+    3. Test it. `walker` picks the extensions up automatically; there is no
+       second list to keep in sync.
+
+  Guards are split deliberately: size and I/O are shared (here), while content
+  sniffing belongs to the format. The NUL-byte check that rejects binaries is a
+  plain-text concern — a PDF is *supposed* to be binary — so it lives in the text
+  extractor, not in the dispatcher."
+  (:require [clojure.string :as str])
   (:import [java.nio.file Files]
            [java.nio.charset StandardCharsets]))
 
-(def ^:private max-bytes
+(def ^:private default-max-bytes
   "Skip files larger than this; nothing in a personal text corpus is legitimately
-  bigger, and it keeps a stray blob from blowing up the index."
+  bigger, and it keeps a stray blob from blowing up the index. A format that
+  needs more room (PDFs run large) overrides it with :max-bytes."
   (* 5 1024 1024))
+
+(defn ext
+  "File -> str | nil
+  Lower-cased extension of `f` (without the dot), or nil if it has none. This is
+  the registry's dispatch key."
+  [^java.io.File f]
+  (let [n (.getName f)
+        i (.lastIndexOf n ".")]
+    (when (pos? i)
+      (str/lower-case (subs n (inc i))))))
 
 (defn- probably-binary?
   "Heuristic: a NUL byte within the first 8 KiB means it's not text we want."
@@ -21,15 +48,65 @@
         (zero? (aget bs i))  true
         :else                (recur (inc i))))))
 
+(defn- extract-text
+  "File -> str | nil
+  Plain-text and source files: read the bytes as UTF-8. Returns nil for content
+  that sniffs as binary despite a text-like extension."
+  [^java.io.File file]
+  (let [bs (Files/readAllBytes (.toPath file))]
+    (when-not (probably-binary? bs)
+      (String. bs StandardCharsets/UTF_8))))
+
+(def formats
+  "The extraction registry — see the namespace docstring for how to extend it.
+
+  Each entry:
+    :name       keyword, for humans
+    :extensions set of lower-cased extensions it claims (no dots)
+    :extract    File -> str | nil
+    :max-bytes  optional size ceiling, defaulting to `default-max-bytes`"
+  [{:name       :text
+    :extensions #{"txt" "text" "md" "markdown" "org" "rst" "adoc" "tex"
+                  "clj" "cljc" "cljs" "cljd" "edn" "bb"
+                  "go" "py" "rs" "java" "kt" "kts" "scala"
+                  "js" "jsx" "ts" "tsx" "mjs" "cjs"
+                  "c" "h" "cc" "cpp" "hpp" "cxx" "hxx"
+                  "rb" "php" "pl" "sh" "bash" "zsh" "fish" "lua" "el" "vim"
+                  "json" "yaml" "yml" "toml" "ini" "cfg" "conf" "properties"
+                  "html" "htm" "css" "scss" "less" "sql" "xml" "csv" "tsv"}
+    :extract    extract-text}])
+
+(def ^:private by-ext
+  "extension -> format entry. Built once from `formats`; a duplicate claim is a
+  bug in the registry, so the later entry silently winning would be worse than
+  noticing here."
+  (reduce (fn [m {:keys [extensions] :as fmt}]
+            (reduce (fn [m e]
+                      (when-let [prior (get m e)]
+                        (throw (ex-info (str "two formats claim ." e)
+                                        {:ext e :formats [(:name prior) (:name fmt)]})))
+                      (assoc m e fmt))
+                    m extensions))
+          {} formats))
+
+(def supported-extensions
+  "Every extension the registry can extract — what `walker` filters on."
+  (set (keys by-ext)))
+
 (defn extract
   "File -> str | nil
-  Return the text content of `file` as a String, or nil if it should be skipped
-  (empty, too large, unreadable, or binary)."
+  Return the text content of `file` as a String, or nil if it should be skipped:
+  no registered format for its extension, empty, over that format's size ceiling,
+  unreadable, or rejected by the format itself (e.g. binary content under a
+  text-like extension).
+
+  Format-specific failure modes beyond I/O (a corrupt or encrypted document) are
+  the format's to catch; anything that escapes is caught per-file by
+  rag.index/embed-file-result and reported as that file's error."
   [^java.io.File file]
-  (let [len (.length file)]
-    (when (<= 1 len max-bytes)
-      (try
-        (let [bs (Files/readAllBytes (.toPath file))]
-          (when-not (probably-binary? bs)
-            (String. bs StandardCharsets/UTF_8)))
-        (catch java.io.IOException _ nil)))))
+  (when-let [fmt (get by-ext (ext file))]
+    (let [len (.length file)]
+      (when (<= 1 len (:max-bytes fmt default-max-bytes))
+        (try
+          ((:extract fmt) file)
+          (catch java.io.IOException _ nil))))))

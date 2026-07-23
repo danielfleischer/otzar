@@ -108,7 +108,7 @@
         (let [csha (sha1 text)]
           (if (and reusable? (= csha (:content_sha1 prior)))
             ::unchanged
-            (let [ext      (walker/ext f)
+            (let [ext      (extractor/ext f)
                   chunks   (chunker/pack (segmenter/segment text))
                   _        (when (seq chunks)
                              (on-progress {:type "file-start" :path path :total (count chunks)}))

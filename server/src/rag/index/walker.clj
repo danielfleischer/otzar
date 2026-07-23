@@ -1,21 +1,14 @@
 (ns rag.index.walker
   "Filesystem traversal for indexing. Given a path, yields the individual files
   we should index — expanding directories (optionally recursively) and skipping
-  hidden entries, known noise directories, and files whose extension isn't
-  text-like. Binary/oversized filtering happens later, in the extractor."
-  (:require [clojure.java.io :as io]
-            [clojure.string :as str]))
+  hidden entries, known noise directories, and files no extractor claims.
+  Binary/oversized filtering happens later, in the extractor.
 
-(def text-extensions
-  "Extensions treated as indexable text for v1 (M1). PDF/HTML via Tika is M8."
-  #{"txt" "text" "md" "markdown" "org" "rst" "adoc" "tex"
-    "clj" "cljc" "cljs" "cljd" "edn" "bb"
-    "go" "py" "rs" "java" "kt" "kts" "scala"
-    "js" "jsx" "ts" "tsx" "mjs" "cjs"
-    "c" "h" "cc" "cpp" "hpp" "cxx" "hxx"
-    "rb" "php" "pl" "sh" "bash" "zsh" "fish" "lua" "el" "vim"
-    "json" "yaml" "yml" "toml" "ini" "cfg" "conf" "properties"
-    "html" "htm" "css" "scss" "less" "sql" "xml" "csv" "tsv"})
+  Which extensions count is not decided here: it comes from
+  `rag.index.extractor/supported-extensions`, so registering a format there is
+  enough to make the walker yield it."
+  (:require [clojure.java.io :as io]
+            [rag.index.extractor :as extractor]))
 
 (def skip-dirs
   "Directory names never descended into during a recursive walk."
@@ -23,22 +16,14 @@
     ".clj-kondo" ".lsp" ".cpcache" "__pycache__" ".idea" ".vscode"
     ".gradle" ".mvn" "vendor" ".otzer"})
 
-(defn ext
-  "File -> str | nil
-  Lower-cased extension of `f` (without the dot), or nil if it has none."
-  [^java.io.File f]
-  (let [n (.getName f)
-        i (.lastIndexOf n ".")]
-    (when (pos? i)
-      (str/lower-case (subs n (inc i))))))
-
 (defn indexable-file?
   "File -> bool
-  True when `f` is a non-hidden regular file with a text-like extension."
+  True when `f` is a non-hidden regular file whose extension some format in the
+  extractor registry claims."
   [^java.io.File f]
   (and (.isFile f)
        (not (.isHidden f))
-       (contains? text-extensions (ext f))))
+       (contains? extractor/supported-extensions (extractor/ext f))))
 
 (defn- skip-dir? [^java.io.File d]
   (or (.isHidden d)
