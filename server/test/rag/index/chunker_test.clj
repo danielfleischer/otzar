@@ -3,9 +3,11 @@
             [rag.index.chunker :as chunker]))
 
 (defn- sent
-  "A sentence map like segmenter/segment emits. One arg puts it on line 1."
+  "A sentence map like segmenter/segment emits. One arg puts it in unit 1. The
+  packer never asks what a :loc counts — line for a text file, page for a PDF — so
+  these read as lines and hold for either."
   ([text] (sent text 1))
-  ([text line] {:text text :line line}))
+  ([text loc] {:text text :loc loc}))
 
 (deftest pack-empty
   (testing "nil/blank input yields no chunks"
@@ -19,7 +21,7 @@
 
 (deftest pack-short-doc-single-chunk
   (testing "≤ core sentences → one chunk at idx 0, sentences space-joined"
-    (is (= [{:chunk_idx 0 :text "One. Two. Three." :line_start 1 :line_end 1}]
+    (is (= [{:chunk_idx 0 :text "One. Two. Three." :loc_start 1 :loc_end 1}]
            (chunker/pack [(sent "One.") (sent "Two.") (sent "Three.")] opts)))))
 
 (deftest pack-windows-with-context
@@ -32,13 +34,13 @@
               "s5 s6 s7 s8"]       ; window 2: +1 before, no sentence after
              (map :text chunks))))))
 
-(deftest pack-line-ranges
-  (testing "each chunk's [:line_start :line_end] spans its window's first→last line"
-    (let [s      (mapv #(sent (str "s" %) (inc %)) (range 9))  ; s_i on line i+1
+(deftest pack-loc-ranges
+  (testing "each chunk's [:loc_start :loc_end] spans its window's first→last unit"
+    (let [s      (mapv #(sent (str "s" %) (inc %)) (range 9))  ; s_i in unit i+1
           chunks (chunker/pack s opts)]
       (is (= [[1 4] [3 7] [6 9]]
-             (map (juxt :line_start :line_end) chunks)))))
-  (testing "sentences sharing a line collapse the range to that line"
-    (is (= [{:line_start 1 :line_end 1}]
-           (map #(select-keys % [:line_start :line_end])
+             (map (juxt :loc_start :loc_end) chunks)))))
+  (testing "sentences sharing a unit collapse the range to that unit"
+    (is (= [{:loc_start 1 :loc_end 1}]
+           (map #(select-keys % [:loc_start :loc_end])
                 (chunker/pack [(sent "One." 1) (sent "Two." 1)]))))))

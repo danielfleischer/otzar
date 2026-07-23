@@ -61,7 +61,9 @@ Response:
 ```
 
 - `indexed` — files that produced at least one chunk.
-- `skipped` — files skipped by the extractor (empty, oversized, or binary).
+- `skipped` — files skipped by the extractor: empty, oversized, binary, or a PDF
+  with no text layer (a scan — there is no OCR). A file we could read but are not
+  allowed to (a password-protected PDF) is an `errors` entry, not a skip.
 - `errors` — files that threw during extraction/chunking.
 
 ### DELETE /index
@@ -114,12 +116,27 @@ Response:
 {"hits": [
   {"id": "a1b2:7", "doc_id": "a1b2", "path": "/notes/rag.md",
    "score": 12.4, "text": "...chunk text...", "chunk_idx": 7,
-   "mtime": 1712345678000}
+   "mtime": 1712345678000,
+   "locator": "line", "loc_start": 42, "loc_end": 47}
 ]}
 ```
 
 `mtime` is epoch milliseconds (a Lucene `LongPoint`); the ISO-8601 form in the
 plan is deferred.
+
+`locator` + `loc_start`/`loc_end` are the chunk's citation span — where in the
+source it came from, and in what units:
+
+| `locator` | units                 | formats           | cite as            |
+|-----------|-----------------------|-------------------|--------------------|
+| `line`    | 1-based source lines  | text, code, md, … | `/notes/rag.md:42-47` |
+| `page`    | 1-based page numbers  | PDF               | `/papers/rag.pdf p.4` |
+
+The span is inclusive, and `loc_start == loc_end` when the chunk sits in a single
+unit. Read the unit from `locator` rather than from the file extension: the
+server's extractor registry decides it, so a new format can bring a new unit.
+All three fields are **omitted** (not null) for chunks indexed before locator
+tracking — render the bare path in that case rather than inventing a range.
 
 ### GET /document/:id
 
@@ -131,6 +148,7 @@ Fetch one item by id. What `id` refers to decides the shape:
   ```json
   {"id": "a1b2:7", "doc_id": "a1b2", "path": "/notes/rag.md",
    "ext": "md", "mtime": 1712345678000, "chunk_idx": 7,
+   "locator": "line", "loc_start": 42, "loc_end": 47,
    "text": "...stored chunk text..."}
   ```
 
@@ -146,6 +164,9 @@ Fetch one item by id. What `id` refers to decides the shape:
 
   - `stale` — present and `true` only when the file's current sha1 differs from
     what was indexed (it changed since the last index). Absent when they match.
+  - For a format that has to be *extracted* rather than read — PDF — `text` is
+    the extraction of the file as it stands on disk now, with pages separated by
+    a form feed (`\f`). Faithful to the current file, but not its bytes.
 
 Returns `404 {"error": "..."}` when the id isn't indexed, or (for a `doc_id`) the
 file is no longer readable on disk.

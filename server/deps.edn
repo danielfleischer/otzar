@@ -6,7 +6,13 @@
   metosin/jsonista                         {:mvn/version "1.0.0"}
   org.apache.lucene/lucene-core            {:mvn/version "10.5.0"}
   org.apache.lucene/lucene-analysis-common {:mvn/version "10.5.0"}
-  org.apache.lucene/lucene-queryparser     {:mvn/version "10.5.0"}}
+  org.apache.lucene/lucene-queryparser     {:mvn/version "10.5.0"}
+  org.apache.pdfbox/pdfbox                 {:mvn/version "3.0.7"}
+  ;; PDFBox logs through SLF4J and complains on stderr about the missing provider
+  ;; the moment its namespace loads. Its chatter (font quirks, recovered xrefs) is
+  ;; not actionable here — a PDF we truly can't read comes back as that file's
+  ;; error — so bind it to the no-op provider and keep the server log clean.
+  org.slf4j/slf4j-nop                      {:mvn/version "2.0.17"}}
  :aliases
  ;; Production boot. No nREPL/CIDER here: rag.main loads them dynamically only
  ;; when enabled (see :dev), so a plain `-M:run` neither puts them on the

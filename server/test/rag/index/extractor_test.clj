@@ -5,7 +5,8 @@
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [rag.index.extractor :as extractor])
+            [rag.index.extractor :as extractor]
+            [rag.index.segmenter :as segmenter])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -45,6 +46,20 @@
   (testing "a nonexistent file is skipped, not thrown"
     (is (nil? (extractor/extract (io/file *root* "gone.md"))))))
 
+(deftest locators
+  (testing "a format's citable unit follows its extension"
+    (is (= "line" (extractor/locator (io/file "/tmp/notes.md"))))
+    (is (= "page" (extractor/locator (io/file "/tmp/paper.PDF")))))
+  (testing "an unclaimed extension falls back to lines — nothing chunks it anyway"
+    (is (= "line" (extractor/locator (io/file "/tmp/photo.png"))))))
+
+(deftest pdf-dispatch
+  (testing "a file that is not really a PDF is skipped, not thrown"
+    ;; PDFBox raises an IOException on unparseable bytes, which the dispatcher
+    ;; treats like any other unreadable file. (Extraction itself is covered
+    ;; against real PDFs in rag.index.extract.pdf-test.)
+    (is (nil? (extractor/extract (write "not-really.pdf" "just some text"))))))
+
 (deftest size-guard
   (testing "empty files are skipped"
     (is (nil? (extractor/extract (write "empty.md" "")))))
@@ -70,9 +85,14 @@
     (is (= (count extractor/supported-extensions)
            (reduce + (map (comp count :extensions) extractor/formats)))))
   (testing "every format is complete enough to dispatch to"
-    (doseq [{:keys [name extensions extract]} extractor/formats]
+    (doseq [{:keys [name extensions extract locator]} extractor/formats]
       (is (keyword? name))
       (is (seq extensions) (str name " claims no extensions"))
       (is (every? #(= % (str/lower-case %)) extensions)
           (str name " must claim lower-cased extensions — dispatch lower-cases"))
-      (is (ifn? extract) (str name " has no :extract fn")))))
+      (is (ifn? extract) (str name " has no :extract fn"))
+      ;; The other half of the locator contract: a format may only claim a unit
+      ;; the segmenter knows how to split its text on.
+      (is (contains? segmenter/unit-separator locator)
+          (str name " claims locator " (pr-str locator)
+               ", which segmenter/unit-separator cannot split on")))))

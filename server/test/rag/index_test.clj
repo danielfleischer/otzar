@@ -131,9 +131,9 @@
 (defn- run-file->chunks [prior file force?]
   (with-redefs [lucene/doc-meta        (constantly prior)
                 extractor/extract       (constantly text)
-                segmenter/segment       (constantly [{:text text :line 1}])
+                segmenter/segment       (constantly [{:text text :loc 1}])
                 chunker/pack            (constantly [{:chunk_idx 0 :text text
-                                                      :line_start 1 :line_end 1}])
+                                                      :loc_start 1 :loc_end 1}])
                 embed/embed-documents   (fn [texts & _] (mapv (fn [_] (float-array [0.5])) texts))]
     (#'index/file->chunks :comp spec file (constantly false) (fn [_]) force?)))
 
@@ -176,3 +176,17 @@
         (with-redefs [lucene/doc-meta   (constantly nil)
                       extractor/extract (constantly nil)]
           (is (nil? (#'index/file->chunks :comp spec file (constantly false) (fn [_]) false))))))))
+
+(deftest file->chunks-stamps-the-format-s-locator
+  (testing "the chunk records which unit its span counts, from the file's format"
+    ;; The registry decides (a .md is lines, a .pdf is pages) and the segmenter is
+    ;; told the same thing — so a hit can say `file.md:42-47` vs `file.pdf p.4`
+    ;; without the client guessing from the extension.
+    (with-file
+      (fn [file _mtime]
+        (is (= "line" (:locator (first (run-file->chunks nil file false)))))))
+    (let [pdf (File/createTempFile "index-test" ".pdf")]
+      (try
+        (spit pdf text)
+        (is (= "page" (:locator (first (run-file->chunks nil pdf false)))))
+        (finally (.delete pdf))))))

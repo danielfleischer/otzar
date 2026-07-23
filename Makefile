@@ -14,7 +14,7 @@ install: build ## Install the client binary to ~/.local/bin (override with INSTA
 	@echo "installed $(INSTALL_DIR)/otzer"
 
 check-server: ## Compile-check every server namespace (no boot, no artifact)
-	cd server && clojure -M:check -e "(run! require '[rag.config rag.main rag.http rag.index rag.embed rag.index.walker rag.index.extractor rag.index.segmenter rag.index.chunker rag.index.lucene rag.query.hybrid]) (println \"server namespaces compiled OK\")"
+	cd server && clojure -M:check -e "(run! require '[rag.config rag.main rag.http rag.index rag.embed rag.index.walker rag.index.extractor rag.index.extract.pdf rag.index.segmenter rag.index.chunker rag.index.lucene rag.query.hybrid]) (println \"server namespaces compiled OK\")"
 
 server-deps: ## Pre-fetch the server's JVM dependencies
 	cd server && clojure -P

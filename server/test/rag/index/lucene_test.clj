@@ -55,6 +55,25 @@
     (is (= {:num_docs 0 :num_chunks 0} (lucene/stats *idx*)))
     (is (= [] (lucene/paths *idx*)))))
 
+(deftest locator-span-round-trips
+  (testing "a chunk's citation span comes back on hits and on get-chunk"
+    (lucene/add-chunks! *idx* [(assoc (mk-chunk "d1" "/paper.pdf" 0)
+                                      :locator "page" :loc_start 4 :loc_end 5)])
+    (lucene/commit! *idx*)
+    (let [hit (first (lucene/keyword-search *idx* "chunk" 10 nil))]
+      (is (= {:locator "page" :loc_start 4 :loc_end 5}
+             (select-keys hit [:locator :loc_start :loc_end]))))
+    (is (= {:locator "page" :loc_start 4 :loc_end 5}
+           (select-keys (lucene/get-chunk *idx* "d1:0") [:locator :loc_start :loc_end]))))
+
+  (testing "a chunk indexed before locators omits the keys rather than nulling them"
+    ;; The client renders a bare path for these; a null would read as \"line 0\".
+    (lucene/add-chunks! *idx* [(mk-chunk "d2" "/old.md" 0)])
+    (lucene/commit! *idx*)
+    (let [hit (first (lucene/keyword-search *idx* "old.md" 10 nil))]
+      (is (= "d2:0" (:id hit)))
+      (is (empty? (select-keys hit [:locator :loc_start :loc_end]))))))
+
 (deftest index-is-reusable-after-clear
   (testing "the index still accepts new chunks after a clear!"
     (seed!)

@@ -8,8 +8,10 @@
   chunks overlap. No token counting.
 
   The output shape is the contract everything downstream depends on
-  (rag.index → rag.index.lucene): a vector of {:chunk_idx :text :line_start
-  :line_end} maps."
+  (rag.index → rag.index.lucene): a vector of {:chunk_idx :text :loc_start
+  :loc_end} maps. The packer is deliberately incurious about what a :loc *is* —
+  the segmenter numbers lines for a text file and pages for a PDF, and either way
+  a chunk's span is just its window's first through last."
   (:require [clojure.string :as str]))
 
 (def default-opts
@@ -19,14 +21,15 @@
   {:core 6 :context 2})
 
 (defn pack
-  "[{:text str, :line int}], {:core int, :context int}?
-     -> [{:chunk_idx int, :text str, :line_start int, :line_end int}]
+  "[{:text str, :loc int}], {:core int, :context int}?
+     -> [{:chunk_idx int, :text str, :loc_start int, :loc_end int}]
   Group `sentences` (the maps segmenter/segment returns) into overlapping chunks.
-  Returns a vector of {:chunk_idx i :text s :line_start a :line_end b} maps in
+  Returns a vector of {:chunk_idx i :text s :loc_start a :loc_end b} maps in
   order, where :chunk_idx is the 0-based position, :text is the chunk's sentences
-  joined by a single space, and [:line_start :line_end] is the inclusive 1-based
-  source-line span covered by the chunk (its first sentence's line through its
-  last's — sentence lines are monotonically non-decreasing, so this is the range).
+  joined by a single space, and [:loc_start :loc_end] is the inclusive 1-based
+  span of locator units covered by the chunk — lines, or pages for a PDF (its
+  first sentence's unit through its last's; sentence units are monotonically
+  non-decreasing, so this is the range).
 
   Each chunk covers `core` consecutive sentences plus `context` sentence(s) of
   overlap on each side, clamped at the document's start/end. Blank sentences are
@@ -43,8 +46,8 @@
          (let [from   (max 0 (- start context))
                to     (min n (+ start core context))
                window (subvec sentences from to)]
-           {:chunk_idx  idx
-            :text       (str/join " " (map :text window))
-            :line_start (:line (first window))
-            :line_end   (:line (peek window))}))
+           {:chunk_idx idx
+            :text      (str/join " " (map :text window))
+            :loc_start (:loc (first window))
+            :loc_end   (:loc (peek window))}))
        (range 0 n core))))))

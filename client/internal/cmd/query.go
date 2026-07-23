@@ -78,18 +78,23 @@ keyword (BM25), vector (kNN over embeddings), or hybrid (RRF fusion of both).
 	},
 }
 
-// location renders a hit's source as path:line for citation — "file.md:42-47", or
-// "file.md:42" for a single line. Falls back to the bare path when the chunk has
-// no line range (older index, or an extractor without source lines).
+// location renders a hit's source in the form you'd cite or paste it: line-based
+// chunks as "file.md:42-47" (or "file.md:42" for one line), which editors and
+// terminals turn into a jump; page-based ones as "paper.pdf p.4-5", since a PDF
+// has no line to jump to. Falls back to the bare path when the chunk carries no
+// span at all — a chunk indexed before locator tracking.
 func location(h api.Hit) string {
-	switch {
-	case h.LineStart == 0:
+	if h.LocStart == 0 {
 		return h.Path
-	case h.LineEnd > h.LineStart:
-		return fmt.Sprintf("%s:%d-%d", h.Path, h.LineStart, h.LineEnd)
-	default:
-		return fmt.Sprintf("%s:%d", h.Path, h.LineStart)
 	}
+	sep, span := ":", fmt.Sprintf("%d", h.LocStart)
+	if h.Locator == "page" {
+		sep = " p."
+	}
+	if h.LocEnd > h.LocStart {
+		span = fmt.Sprintf("%d-%d", h.LocStart, h.LocEnd)
+	}
+	return h.Path + sep + span
 }
 
 // snippet collapses a chunk to a single truncated line for table display.

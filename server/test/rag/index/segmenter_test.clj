@@ -3,7 +3,7 @@
             [rag.index.segmenter :as segmenter]))
 
 (defn- texts
-  "Just the sentence strings, dropping line numbers — for the shape-agnostic cases."
+  "Just the sentence strings, dropping locators — for the shape-agnostic cases."
   [segments]
   (mapv :text segments))
 
@@ -15,9 +15,9 @@
 
 (deftest splits-english-prose
   (testing "English prose splits into one map per sentence, all on line 1"
-    (is (= [{:text "The cat sat on the mat." :line 1}
-            {:text "The dog ran in the park." :line 1}
-            {:text "Birds flew overhead." :line 1}]
+    (is (= [{:text "The cat sat on the mat." :loc 1}
+            {:text "The dog ran in the park." :loc 1}
+            {:text "Birds flew overhead." :loc 1}]
            (segmenter/segment "The cat sat on the mat. The dog ran in the park. Birds flew overhead.")))))
 
 (deftest splits-hebrew-prose
@@ -51,12 +51,29 @@
              (texts (segmenter/segment "One. Two.\nThree.")))))))
 
 (deftest tracks-source-line
-  (testing ":line is the 1-based source line, shared by sentences on the same line"
-    (is (= [{:text "One." :line 1} {:text "Two." :line 1} {:text "Three." :line 2}]
+  (testing ":loc is the 1-based source line, shared by sentences on the same line"
+    (is (= [{:text "One." :loc 1} {:text "Two." :loc 1} {:text "Three." :loc 2}]
            (segmenter/segment "One. Two.\nThree."))))
   (testing "blank lines still advance the line counter (a \\R is a line, even if empty)"
-    (is (= [{:text "first block" :line 1} {:text "second block" :line 3}]
+    (is (= [{:text "first block" :loc 1} {:text "second block" :loc 3}]
            (segmenter/segment "first block\n\nsecond block"))))
   (testing "\\r\\n counts as one line break, \\r as one too"
-    (is (= [{:text "a" :line 1} {:text "b" :line 2} {:text "c" :line 3}]
+    (is (= [{:text "a" :loc 1} {:text "b" :loc 2} {:text "c" :loc 3}]
            (segmenter/segment "a\r\nb\rc")))))
+
+(deftest page-locator
+  (testing ":loc counts form-feed-delimited pages, not lines (what a PDF cites)"
+    (is (= [{:text "First page." :loc 1}
+            {:text "Still page one." :loc 1}
+            {:text "Second page." :loc 2}]
+           (segmenter/segment "First page.\nStill page one.\fSecond page." "page"))))
+  (testing "lines inside a page are still hard sentence boundaries"
+    ;; The page is the citable unit; newlines within it keep an un-punctuated
+    ;; run (a slide's bullets) from collapsing into one giant sentence.
+    (is (= ["intro" "- one" "- two"]
+           (texts (segmenter/segment "intro\n- one\n- two" "page")))))
+  (testing "a trailing form feed does not invent an empty page"
+    (is (= [{:text "Only page." :loc 1}]
+           (segmenter/segment "Only page.\f" "page"))))
+  (testing "a locator nothing knows how to split on is a registry bug, so it throws"
+    (is (thrown? clojure.lang.ExceptionInfo (segmenter/segment "text" "para")))))

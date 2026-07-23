@@ -96,6 +96,11 @@ type QueryResult struct {
 
 // Hit is one ranked chunk. MTime is epoch milliseconds (a Lucene LongPoint);
 // the ISO-string form in the plan is deferred.
+//
+// Locator/LocStart/LocEnd are the chunk's citation span: what to point at, and in
+// which units. Locator is "line" for text and code, "page" for a PDF — it is not
+// derivable from the extension, since the server's extractor registry decides it.
+// All three are absent (empty/0) for chunks indexed before locator tracking.
 type Hit struct {
 	ID             string          `json:"id"`
 	DocID          string          `json:"doc_id"`
@@ -104,8 +109,9 @@ type Hit struct {
 	Text           string          `json:"text"`
 	ChunkIdx       int             `json:"chunk_idx"`
 	MTime          int64           `json:"mtime"`
-	LineStart      int             `json:"line_start,omitempty"` // 1-based source line span; 0/absent
-	LineEnd        int             `json:"line_end,omitempty"`   // for chunks indexed before line tracking
+	Locator        string          `json:"locator,omitempty"`
+	LocStart       int             `json:"loc_start,omitempty"`
+	LocEnd         int             `json:"loc_end,omitempty"`
 	ScoreBreakdown *ScoreBreakdown `json:"score_breakdown,omitempty"`
 }
 
@@ -129,8 +135,9 @@ type Document struct {
 	Ext       string `json:"ext,omitempty"`
 	MTime     int64  `json:"mtime"`
 	ChunkIdx  *int   `json:"chunk_idx,omitempty"`
-	LineStart int    `json:"line_start,omitempty"` // chunk shape only: 1-based source line span
-	LineEnd   int    `json:"line_end,omitempty"`
+	Locator   string `json:"locator,omitempty"`   // chunk shape only: the citation span,
+	LocStart  int    `json:"loc_start,omitempty"` // in lines (text) or pages (PDF)
+	LocEnd    int    `json:"loc_end,omitempty"`
 	NumChunks int    `json:"num_chunks,omitempty"`
 	Text      string `json:"text"`
 	Stale     bool   `json:"stale,omitempty"` // file changed on disk since indexing

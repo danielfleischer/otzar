@@ -89,7 +89,7 @@
   `force?` bypasses all of that: every file is re-extracted, re-chunked and
   re-embedded even when nothing changed. It's the escape hatch for changes the
   content/model gate can't see — a new chunker or a chunk-schema field (e.g. adding
-  :line_start/:line_end): the bytes and model are identical, so only an explicit
+  :loc_start/:loc_end): the bytes and model are identical, so only an explicit
   force re-populates existing docs.
   `cancelled?` is threaded into the embedder so a large file's embedding is
   abandoned promptly (between batches) when the client disconnects. `on-progress`
@@ -109,21 +109,23 @@
           (if (and reusable? (= csha (:content_sha1 prior)))
             ::unchanged
             (let [ext      (extractor/ext f)
-                  chunks   (chunker/pack (segmenter/segment text))
+                  loc      (extractor/locator f)
+                  chunks   (chunker/pack (segmenter/segment text loc))
                   _        (when (seq chunks)
                              (on-progress {:type "file-start" :path path :total (count chunks)}))
                   on-batch (fn [done total]
                              (on-progress {:type "chunk" :path path :done done :total total}))
                   vecs     (embed/embed-documents (map :text chunks) cancelled? on-batch)]
-              (mapv (fn [{:keys [chunk_idx text line_start line_end]} embedding]
+              (mapv (fn [{:keys [chunk_idx text loc_start loc_end]} embedding]
                       {:id           (str doc-id ":" chunk_idx)
                        :doc_id       doc-id
                        :path         path
                        :ext          ext
                        :mtime        mtime
                        :chunk_idx    chunk_idx
-                       :line_start   line_start
-                       :line_end     line_end
+                       :locator      loc
+                       :loc_start    loc_start
+                       :loc_end      loc_end
                        :text         text
                        :content_sha1 csha
                        :model_spec   spec

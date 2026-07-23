@@ -160,6 +160,9 @@ the sidecar only if standalone-sentence quality (not chunking) ever matters.
 | `ext`          | `StringField` (indexed)           | File extension, for filtering    |
 | `mtime`        | `LongPoint` + stored              | Last modified, for filtering     |
 | `chunk_idx`    | `IntPoint` + stored               | Position in source doc           |
+| `locator`      | `StoredField`                     | Unit of the span below (§13.7)   |
+| `loc_start`    | `StoredField`                     | First line/page of the chunk     |
+| `loc_end`      | `StoredField`                     | Last line/page of the chunk      |
 | `text`         | `TextField` (stored, indexed)     | Chunk text (BM25 keyword search) |
 | `embedding`    | `KnnFloatVectorField` (cosine)    | Dense vector (1024-dim, `bge-m3`)|
 | `tags`         | `StringField` multi-valued        | User tags (future)               |
@@ -298,7 +301,8 @@ rag/
 │   │   ├── index/
 │   │   │   ├── lucene.clj          # open/close writer & searcher, schema
 │   │   │   ├── walker.clj          # filesystem traversal, mime sniffing
-│   │   │   ├── extractor.clj       # text extraction per file type
+│   │   │   ├── extractor.clj       # extraction registry, dispatched by extension
+│   │   │   ├── extract/pdf.clj     # PDF text + page locators (PDFBox)
 │   │   │   ├── segmenter.clj       # sentence detection (JDK BreakIterator)
 │   │   │   └── chunker.clj         # sentence packing + overlap
 │   │   ├── embed.clj               # Ollama embedding client (HTTP sidecar)
@@ -383,8 +387,11 @@ A rough sequence — each milestone is independently runnable and demoable.
    `list_indexed_paths`. Lazily ensures the Clojure server is running via
    `lifecycle.go`. Verify end-to-end with at least one host (Claude Desktop or
    Claude Code).
-9. **M8 — polish**: better extractors (PDF via Tika?), tags, query DSL niceties,
-   maybe a TUI.
+9. **M8 — polish**: better extractors, tags, query DSL niceties, maybe a TUI.
+   *(Extraction is an open registry in `rag.index.extractor`, one entry per
+   format; PDF landed on PDFBox rather than Tika — 4 jars instead of Tika's
+   dependency tree, for the one format actually wanted. docx via
+   `java.util.zip` over `word/document.xml` is the obvious next entry.)*
 
 ## 11. Open questions to resolve before / during M0
 
@@ -397,7 +404,8 @@ A rough sequence — each milestone is independently runnable and demoable.
 - Ollama lifecycle — does the client also start Ollama, or assume the user runs it?
   Probably assume for v1; document clearly.
 - File types in v1 — start with `.txt`, `.md`, source code; PDF/HTML via Tika is
-  M6.
+  M6. Resolved: text/code/markdown shipped first, PDF followed via PDFBox (not
+  Tika, see M8); HTML is still parsed as plain text, tags and all.
 - Concurrency model — single Lucene `IndexWriter` (Lucene's invariant), pool of
   searchers refreshed via `SearcherManager`. Indexing requests serialize through a
   channel/agent.
@@ -494,39 +502,43 @@ That's the entire integration surface for the user.
   bounded-latency; surface progress via the CLI instead.
 - Authentication / per-tool ACLs. Single-user, local — not needed.
 
-### 13.7 Source line numbers for citation (deferred — see todo.org #4)
+### 13.7 Locators — where a hit came from (done — was todo.org #4)
 
 The MCP consumer is an LLM host (Claude Code/Desktop). What it does with a hit is
-*cite or open it* — and the format it natively understands is `path:line`. That
-usage dictates the design, both the shape and the caveats:
+*cite or open it*, and the form that takes is `path:line`. That usage dictated the
+design, both the shape and the caveats:
 
-- **A line range, not a point.** A chunk spans several sentences over several
-  lines, so a single "the line" under-specifies where the evidence is. Return
-  `{:line_start :line_end}` (1-based, editor/human convention) so the model can
-  cite `path:Lstart-Lend` and `get_document` can fetch a range.
+- **A range, not a point.** A chunk spans several sentences, so a single "the
+  line" under-specifies where the evidence is. Hits carry `{loc_start, loc_end}`,
+  1-based and inclusive (the editor/human convention).
+- **Tagged, because not every format has lines.** Line numbers are meaningful only
+  while extracted text == file bytes. A PDF has no lines at all — but it does have
+  pages, which is what a reader would cite anyway. So the range comes with a
+  `locator` naming its unit (`line` | `page`), the extractor registry decides it
+  per format, and the client renders `notes.md:42-47` or `paper.pdf p.4`. The
+  first draft of this section said to *omit* the range for PDFs; a tagged unit is
+  strictly better — it cites the thing the format actually has instead of nothing.
 - **Surface it next to the path, and announce it in the tool description.** The
-  host shows the `search` description to the LLM; if hits carry line ranges, say so
-  (e.g. *"…returns ranked chunks with file path and line range"*) or the model
-  won't know it may cite them.
-- **Omit for formats without source lines — never fake it.** Line numbers are only
-  meaningful while extracted text == file bytes, which is exactly today's plain-text
-  extractor (§3.5). M8's Tika extractors (PDF/HTML) *reconstruct* text; offsets
-  won't map to source lines (PDFs have none). For those, omit the field entirely —
-  an LLM handles an absent field fine, but will confidently cite a wrong one.
+  host shows the `search` description to the LLM, so it spells out both units and
+  how to cite each. Absent fields (a chunk indexed before locators) mean "no
+  idea" — an LLM handles a missing field fine, but will confidently cite a wrong
+  one, so they are omitted rather than nulled.
 
-Feasibility: **easy-ish (an afternoon).** The data is already computed and thrown
-away — `segmenter/segment` holds each sentence's char offset (`start` in the
-BreakIterator loop) and discards it. Line number = count of `\n` in the source
-before that offset, +1 (precompute newline offsets once, binary-search per
-sentence). Capture points, in pipeline order:
+Where it lives, in pipeline order:
 
-1. **segmenter** — return `{:text :line}` per sentence instead of a bare string.
-2. **chunker** — a chunk's range is `[first-sentence-line, last-sentence-line]`; the
-   packer already knows the window's `from`/`to` sentence indices. Add
-   `:line_start`/`:line_end` to the emitted map.
-3. **lucene** — store two `StoredField`s alongside `chunk_idx`; retrieve in `->hit`.
-   Additive/backward-compatible: old docs return nil, so only a reindex is needed.
+1. **extractor** — each registry entry declares its `:locator`, and its extracted
+   text marks unit boundaries with that unit's separator (`\R` for lines, `\f` for
+   pages — `rag.index.extract.pdf` writes the form feeds).
+2. **segmenter** — splits on the locator's separator to number the units, then on
+   `\R` within each unit for hard sentence boundaries, tagging every sentence with
+   its unit as `:loc`.
+3. **chunker** — a chunk's range is `[first-sentence-loc, last-sentence-loc]`; the
+   packer already knows the window bounds and stays incurious about what a loc
+   counts.
+4. **lucene** — three `StoredField`s alongside `chunk_idx`, read back in `->hit`
+   and `get-chunk`.
 
-The one real cost isn't the algorithm — it's that `segment`'s return type changes
-from `[String]` to `[map]`, a shared-contract change that ripples into the chunker
-and into both `segmenter_test` and `chunker_test`.
+Renaming `line_start`/`line_end` to `loc_start`/`loc_end` is a wire-contract
+change (server, Go client, MCP tool schema, `docs/api.md`) — and chunks indexed
+before it keep the old fields, which now read as absent, so a `--force` reindex is
+what restores their citations.

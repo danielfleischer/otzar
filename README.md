@@ -16,8 +16,8 @@ See [`docs/rag-project-plan.md`](docs/rag-project-plan.md) for the full design a
 
 Working end to end: hybrid retrieval (BM25 + kNN over embeddings, fused with RRF),
 Ollama-backed embeddings, metadata filters, live indexing progress, an MCP
-adapter, and index maintenance (`stats`, `prune`, `clear`, `reindex`). Local-only,
-single-user, no auth — by design.
+adapter, and index maintenance (`stats`, `prune`, `clear`, `reindex`). Indexes
+text, markdown, code, and PDF. Local-only, single-user, no auth — by design.
 
 ## Requirements
 
@@ -61,6 +61,11 @@ Most commands start the server automatically if it isn't running, so an explicit
 Unchanged files are skipped on re-index. On a TTY you get a live per-file chunk
 progress view; add `-j/--json` for machine-readable output.
 
+Indexable file types: plain text, markdown, and source code (read as-is), and
+**PDF** (text extracted with PDFBox — soft line wraps rejoined into prose; no OCR,
+so a scanned PDF with no text layer is skipped). Anything else is ignored. Formats
+live in one registry, `server/src/rag/index/extractor.clj`, if you want to add one.
+
 ### Query
 
 ```sh
@@ -71,9 +76,11 @@ progress view; add `-j/--json` for machine-readable output.
 ```
 
 `--mode` picks the retriever (`hybrid` | `keyword` | `vector`); `--ext`, `--path`,
-and `--after` are metadata filters that apply to any mode. Hits print as
-`path:line-range` for citation. `-j/--json` emits raw results including the hybrid
-score breakdown.
+and `--after` are metadata filters that apply to any mode. `-j/--json` emits raw
+results including the hybrid score breakdown.
+
+Hits print with the location to cite, in whatever unit the source actually has —
+`~/notes/rag.md:42-47` for a text file, `~/papers/rag.pdf p.4` for a PDF.
 
 ### Admin (index maintenance)
 
