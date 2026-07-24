@@ -13,10 +13,9 @@ the source of truth — leave it as-is.
       subcommands all done). Update the Status section and expand Build & run to
       cover `index`, `query`, `admin *`, and `mcp` — not just `server
       start/stop/status`.
-- [ ] **Drop `todo.org` from the repo.** Plain `git rm todo.org` (no history
-      scrub — it holds no secrets, just an author name + task list). Or
-      `git rm --cached` + `.gitignore` if you want to keep it as a local
-      scratchpad.
+- [x] **Drop `todo.org` from the repo.** Untracked via `git rm --cached` +
+      `.gitignore` entry, keeping it as a local scratchpad (no secrets, just an
+      author name + task list, but no reason to publish a personal TODO).
 
 ## 1. Documentation consistency
 
@@ -37,8 +36,11 @@ the source of truth — leave it as-is.
 
 ## 2. Repo hygiene for OSS
 
-- [ ] `CONTRIBUTING.md` (build, test, how the two toolchains fit together).
-- [ ] CI workflow — build + test both `server/` (Clojure) and `client/` (Go).
+- [x] `CONTRIBUTING.md` (build, test, how the two toolchains fit together).
+- [x] CI workflow — build + test both `server/` (Clojure) and `client/` (Go).
+      `.github/workflows/ci.yml`, two jobs (`server`, `client`), running the
+      same `make check-server`/`make test-server`/`make client`/`make
+      test-client` targets used locally; verified green locally before commit.
 - [x] README section on shell-completion install (`otzar completion fish | source`).
 - [x] Decide on the name. Renamed `myrag` → **`otzar`** (אוֹצָר, Hebrew for
       *treasure*/*thesaurus*). Picked over *otzer* (אוֹצֵר, curator), which is
