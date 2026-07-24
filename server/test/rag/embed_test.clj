@@ -2,9 +2,13 @@
   "Unit tests for the embedding boundary. Ollama HTTP is stubbed — post-embed for
   the batching/ordering/cancellation logic, and ollama-get/ollama-show for the
   model-spec metadata parsing — so nothing here talks to a real sidecar."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [rag.config :as config]
             [rag.embed :as embed]))
+
+;; The model dimension/spec probes are cached for the process lifetime, so isolate
+;; each test — a complete probe in one would otherwise be served to the next.
+(use-fixtures :each (fn [t] (embed/reset-model-cache!) (t) (embed/reset-model-cache!)))
 
 ;; A stand-in Ollama /api/embed that echoes each input's numeric value back as a
 ;; 1-element vector, so a test can assert the vectors come back in input order.
@@ -76,3 +80,40 @@
     (with-redefs [embed/ollama-get  (constantly nil)
                   embed/ollama-show (constantly nil)]
       (is (= config/embed-model (embed/model-spec))))))
+
+(deftest model-spec-caches-a-complete-probe
+  (testing "a complete spec is computed once, then served from cache without re-probing"
+    (let [probes (atom 0)]
+      (with-redefs [embed/ollama-get  (fn [_]
+                                        (swap! probes inc)
+                                        {:models [{:name   (str config/embed-model ":latest")
+                                                   :digest "sha256:85462619ee72"}]})
+                    embed/ollama-show (fn [_] {:model_info {:bert.embedding_length 1024}})]
+        (dotimes [_ 3] (embed/model-spec))
+        (is (= 1 @probes) "Ollama is probed only on the first call")))))
+
+(deftest model-spec-retries-until-a-complete-probe
+  (testing "a degraded probe is not cached; a later call re-probes and caches"
+    (let [live (atom false)]
+      (with-redefs [embed/ollama-get  (fn [_]
+                                        (when @live
+                                          {:models [{:name   (str config/embed-model ":latest")
+                                                     :digest "sha256:85462619ee72"}]}))
+                    embed/ollama-show (fn [_] (when @live {:model_info {:bert.embedding_length 1024}}))]
+        (is (= config/embed-model (embed/model-spec)))   ; Ollama down: bare name, not cached
+        (reset! live true)
+        (is (= (str config/embed-model "@85462619ee72/1024d")
+               (embed/model-spec)))))))                  ; now complete → cached
+
+(deftest embedding-dim-caches-once-known-and-retries-while-nil
+  (testing "a known dimension is cached; a nil (Ollama silent) is retried"
+    (let [live   (atom false)
+          probes (atom 0)]
+      (with-redefs [embed/ollama-show (fn [_]
+                                        (swap! probes inc)
+                                        (when @live {:model_info {:bert.embedding_length 768}}))]
+        (is (nil? (embed/embedding-dim)))                ; not yet up: probe 1, nil, not cached
+        (reset! live true)
+        (is (= 768 (embed/embedding-dim)))               ; probe 2, resolves and caches
+        (embed/embedding-dim)                            ; served from cache, no probe
+        (is (= 2 @probes) "re-probed while nil, then cached once known")))))

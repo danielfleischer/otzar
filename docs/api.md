@@ -18,6 +18,8 @@ Status legend: ✅ implemented · ⬜ planned (milestone in parens).
 | POST   | `/reindex`      | ⬜     | Not needed — `otzer admin reindex` re-embeds the indexed paths via `POST /index` with `force`, so no dedicated endpoint                |
 | DELETE | `/index`        | ✅     | Wipe the whole index → `{removed_docs, removed_chunks}`; the supported reset after an embedding-dimension change (`otzer admin clear`) |
 | POST   | `/prune`        | ✅     | `{dry_run}` → `{removed, kept}`; drop chunks for source files gone from disk                                                           |
+| GET    | `/watch`        | ✅     | Background auto-reindex state → `{enabled, interval_s, indexing, last_sweep_at?, last_result?}`                                        |
+| POST   | `/watch`        | ✅     | `{enabled, interval_s?}` toggle the sweep → the same status shape; persisted to `watch.edn`                                            |
 
 ## Lifecycle files (`~/.otzer/`)
 
@@ -27,6 +29,13 @@ Status legend: ✅ implemented · ⬜ planned (milestone in parens).
 - `server.pid` — written by the **client** when it spawns the server; used to
   signal the process if `/shutdown` is unavailable.
 - `server.log` — server stdout/stderr, written by the client's `start`.
+- `roots.edn` — the paths `POST /index` was asked to index (`{:roots [{:path
+  :recursive}]}`), written by the **server**. The Lucene index stores per-file
+  paths, not roots, so this is the record of "index this tree" that the watch sweep
+  re-scans for new/changed/deleted files.
+- `watch.edn` — the persisted watch toggle (`{:enabled :interval-s}`), written by
+  the **server** when `POST /watch` flips it and read at boot so the background
+  auto-reindex survives a restart.
 
 ## Implemented response shapes
 
@@ -170,6 +179,41 @@ Fetch one item by id. What `id` refers to decides the shape:
 
 Returns `404 {"error": "..."}` when the id isn't indexed, or (for a `doc_id`) the
 file is no longer readable on disk.
+
+### GET /watch · POST /watch
+
+The background auto-reindex sweep (`otzer server watch`). The server periodically
+re-scans the roots recorded in `roots.edn` — reconciling new, changed, and deleted
+files against the index — without a manual `otzer index`. Off by default; the toggle
+persists to `watch.edn` so it survives a restart.
+
+`GET /watch` reports the current state:
+
+```json
+{"enabled": true, "interval_s": 1800, "indexing": false,
+ "last_sweep_at": 1712345678000,
+ "last_result": {"roots": 2, "present": 2, "pruned": [],
+                 "indexed": 1, "chunks": 4, "unchanged": 37,
+                 "skipped_files": 0, "errors": []}}
+```
+
+- `interval_s` — seconds between sweeps (default 1800; `OTZER_WATCH_INTERVAL` or a
+  per-user value set via `POST`).
+- `indexing` — whether an index run (manual or a sweep) holds the single-flight lock
+  right now.
+- `last_sweep_at` / `last_result` — the most recent sweep's time and summary, absent
+  until the first sweep runs. `last_result` is `{"skipped": true}` when that sweep
+  found a run already in progress, or `{"error": "..."}` when it threw.
+
+`POST /watch {"enabled": true, "interval_s": 900}` arms the sweep (the first one
+fires one interval later, so toggling never itself triggers embedding); `interval_s`
+is optional and keeps the current value when omitted. `{"enabled": false}` disables
+it. Either returns the resulting status (the `GET` shape).
+
+A sweep is single-flighted against manual `/index` (and other sweeps): a scan of an
+unchanged tree is cheap — a stat + metadata lookup per file, no embedding, so the
+Ollama model is not loaded — and orphan pruning is skipped for that tick if any root
+has gone missing (an unmounted volume), so a vanished root never deletes its subtree.
 
 ## Errors
 

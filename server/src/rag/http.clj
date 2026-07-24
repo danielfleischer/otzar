@@ -1,13 +1,15 @@
 (ns rag.http
   "Ring/reitit handlers: /health, /stats, /paths, /index (POST add, DELETE clear),
-  /prune, /query, /document/:id, /shutdown. Deletion verbs: /prune drops chunks for
-  source files gone from disk; DELETE /index wipes the whole index. /reindex remains
-  unscheduled (docs/api.md)."
+  /prune, /query, /document/:id, /watch (GET status, POST toggle), /shutdown.
+  Deletion verbs: /prune drops chunks for source files gone from disk; DELETE /index
+  wipes the whole index. /reindex remains unscheduled (docs/api.md)."
   (:require [reitit.ring :as ring]
             [ring.core.protocols :as rcp]
             [jsonista.core :as j]
             [clojure.string :as str]
-            [rag.index :as index])
+            [rag.index :as index]
+            [rag.roots :as roots]
+            [rag.watch :as watch])
   (:import [java.io OutputStream IOException]
            [java.util.concurrent Executors TimeUnit]))
 
@@ -72,7 +74,12 @@
   (let [{:keys [paths recursive force] :or {recursive true}} (read-body req)]
     (if (empty? paths)
       (json 400 {:error "index requires a non-empty \"paths\" array"})
-      {:status  200
+      (do
+       ;; Remember what was asked to index so the watch sweep (rag.watch) can keep
+       ;; re-scanning it for new/changed/deleted files. Recorded up front so even a
+       ;; client that disconnects mid-index still leaves the root registered.
+       (roots/add-roots! paths recursive)
+       {:status  200
        :headers {"Content-Type" "application/x-ndjson"}
        :body
        (reify rcp/StreamableResponseBody
@@ -100,7 +107,7 @@
                (emit (if-let [e (::error result)]
                        {:type "error" :error e}
                        {:type "result" :result result}))
-               (.close out)))))})))
+               (.close out)))))}))))
 
 (defn- prune-handler
   "POST /prune — reconcile the index against disk, dropping chunks for source files
@@ -118,6 +125,24 @@
   the supported reset after an embedding-dimension change."
   [_]
   (json 200 (index/clear!)))
+
+(defn- watch-handler
+  "GET /watch — current state of the background auto-reindex sweep (rag.watch):
+  {:enabled bool :interval_s n :indexing bool [:last_sweep_at :last_result]}."
+  [_]
+  (json 200 (watch/status)))
+
+(defn- watch-set-handler
+  "POST /watch — toggle the background sweep. Body {\"enabled\": bool,
+  \"interval_s\": n?}: enabled true arms it (optionally at interval_s seconds, else
+  the current/default interval), enabled false disables it. The setting persists to
+  watch.edn so it survives a restart. Returns the resulting status (see
+  watch-handler)."
+  [req]
+  (let [{:keys [enabled interval_s]} (read-body req)]
+    (json 200 (if enabled
+                (watch/enable! interval_s)
+                (watch/disable!)))))
 
 (defn- query-handler [req]
   (let [{:keys [q k mode filters fusion] :or {k 10 mode "hybrid"}} (read-body req)]
@@ -155,6 +180,8 @@
      ["/index"    {:post   (with-errors index-handler)
                    :delete (with-errors clear-handler)}]
      ["/prune"    {:post (with-errors prune-handler)}]
+     ["/watch"    {:get  (with-errors watch-handler)
+                   :post (with-errors watch-set-handler)}]
      ["/query"    {:post (with-errors query-handler)}]
      ["/document/:id" {:get (with-errors document-handler)}]
      ["/shutdown" {:post shutdown}]])

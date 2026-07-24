@@ -13,12 +13,28 @@
             [rag.index.extractor :as extractor]
             [rag.index.segmenter :as segmenter]
             [rag.index.chunker :as chunker]
+            [rag.roots :as roots]
             [rag.query.hybrid :as hybrid])
   (:import [java.security MessageDigest]
            [java.time Instant LocalDate ZoneOffset]
-           [java.util.concurrent ExecutorCompletionService Executors Future]))
+           [java.util.concurrent ExecutorCompletionService Executors Future]
+           [java.util.concurrent.locks ReentrantLock]))
 
 (defonce ^:private component (atom nil))
+
+;; Single-flight guard over index runs. Both the manual /index (index-paths!) and
+;; the background watch sweep (sweep!) take it, so they never overlap and double the
+;; writer/embed load. Manual index acquires it blocking (it always runs, just after
+;; any in-progress run); the sweep takes it with tryLock and simply skips the tick if
+;; a run is already going. Reentrant so sweep! can hold it across its own call into
+;; index-paths!.
+(defonce ^:private run-lock (ReentrantLock.))
+
+(defn indexing?
+  "-> bool
+  True while an index run (manual or sweep) holds the single-flight lock."
+  []
+  (.isLocked run-lock))
 
 (def ^:private commit-interval-ms
   "Commit the index at least this often during a long run so files that finish
@@ -190,6 +206,8 @@
   ([paths opts] (index-paths! paths opts (constantly false) (fn [_])))
   ([paths opts cancelled?] (index-paths! paths opts cancelled? (fn [_])))
   ([paths {:keys [recursive force] :or {recursive true}} cancelled? on-progress]
+   (.lock run-lock)  ; single-flight: wait out any in-progress run, then take over
+   (try
    (let [idx    (ensure!)
          _      (ensure-dim! idx (embed/embedding-dim))  ; refuse a dim change before any embedding work
          spec   (embed/model-spec)  ; one Ollama metadata probe per run; stamped on every chunk
@@ -256,7 +274,8 @@
                                :status status
                                :chunks fchunks})
                  (recur pending (inc taken) counters dirty? last-commit))))))
-       (finally (.shutdown pool))))))
+       (finally (.shutdown pool))))
+   (finally (.unlock run-lock)))))
 
 (defn- ->epoch-ms
   "Coerce an mtime bound to epoch millis. Accepts a number (already millis) or an
@@ -369,6 +388,59 @@
        (lucene/reclaim-deletes! idx))
      (cond-> {:removed orphans :kept (- (count indexed) (count orphans))}
        dry-run (assoc :dry_run true)))))
+
+(defn sweep!
+  "-> summary map
+  One background watch sweep (driven by rag.watch on an interval): reconcile the
+  persisted roots (rag.roots) against disk and re-index anything new or changed.
+  Single-flighted against manual /index and other sweeps via the same run lock —
+  if a run is already in progress it does nothing and returns {:skipped true}.
+
+  Otherwise, when at least one root is recorded:
+    - Prune orphans, but ONLY when every root still exists on disk. This is the
+      safety valve against mass deletion: if a root has vanished (an unmounted
+      volume, a moved directory) every file under it would look like an orphan, so
+      rather than delete a whole subtree we skip pruning this tick and leave it to a
+      manual `otzer admin prune`. A genuine single-file delete is picked up on the
+      next sweep once the picture is unambiguous.
+    - Re-index every present root. The change gate in file->chunks makes an
+      unchanged tree cheap — a stat + doc-meta lookup per file, no embedding, so the
+      Ollama model is never loaded — and only real changes reach the embedder.
+  With no roots recorded yet it is a no-op (never prunes), so a pre-existing index
+  is untouched until the user indexes something and populates roots.edn.
+
+  Summary keys (also the JSON shape surfaced by GET /watch's :last_result):
+    :skipped        true when a run was already in progress (nothing else present)
+    :roots :present counts of recorded vs. currently-on-disk roots
+    :pruned         orphan paths dropped (absent/empty when pruning was skipped)
+    :indexed :chunks :unchanged :skipped_files  folded index-paths! counters
+    :errors         per-file errors from the re-index"
+  []
+  (if-not (.tryLock run-lock)
+    {:skipped true}
+    (try
+      (let [all-roots (roots/read-roots)]
+        (if (empty? all-roots)
+          {:roots 0 :present 0 :indexed 0 :chunks 0 :unchanged 0 :skipped_files 0 :errors []}
+          (let [present  (filterv #(.exists (io/file ^String (:path %))) all-roots)
+                all?     (= (count present) (count all-roots))
+                pruned   (when all? (:removed (prune! {})))
+                by-rec   (group-by :recursive present)
+                run      (fn [rs recursive]
+                           (when (seq rs)
+                             (index-paths! (mapv :path rs) {:recursive recursive})))
+                results  (remove nil? [(run (get by-rec true) true)
+                                       (run (get by-rec false) false)])
+                sum      (fn [k] (reduce + (map #(get % k 0) results)))]
+            {:roots         (count all-roots)
+             :present       (count present)
+             :pruned        (vec pruned)
+             :indexed       (sum :indexed)
+             :chunks        (sum :chunks)
+             :unchanged     (sum :unchanged)
+             :skipped_files (sum :skipped)
+             :errors        (into [] (mapcat :errors) results)})))
+      (finally (.unlock run-lock)))))
 
 (defn clear!
   "-> {:removed_docs int, :removed_chunks int}

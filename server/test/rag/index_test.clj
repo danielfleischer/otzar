@@ -4,11 +4,13 @@
   Lucene, the extractor/segmenter/chunker, and the embedder are all stubbed, so
   nothing touches disk or Ollama."
   (:require [clojure.test :refer [deftest is testing]]
+            [clojure.java.io :as io]
             [rag.index :as index]
             [rag.index.lucene :as lucene]
             [rag.index.extractor :as extractor]
             [rag.index.segmenter :as segmenter]
             [rag.index.chunker :as chunker]
+            [rag.roots :as roots]
             [rag.embed :as embed]
             [rag.query.hybrid :as hybrid])
   (:import [java.io File]))
@@ -190,3 +192,73 @@
         (spit pdf text)
         (is (= "page" (:locator (first (run-file->chunks nil pdf false)))))
         (finally (.delete pdf))))))
+
+;; ── sweep! orchestration ────────────────────────────────────────────────────
+;; prune! and index-paths! are stubbed, so nothing touches Lucene/Ollama; only the
+;; root filtering, the all-present prune gate, and the recursive grouping are under
+;; test. A real temp dir stands in for a "present" root (sweep! stats it).
+
+(defn- temp-dir []
+  (doto (io/file (System/getProperty "java.io.tmpdir") (str "sweep-test-" (System/nanoTime)))
+    (.mkdirs)))
+
+(deftest sweep-reindexes-present-roots-and-prunes-when-all-present
+  (let [dir (temp-dir)]
+    (try
+      (let [calls (atom [])]
+        (with-redefs [roots/read-roots   (constantly [{:path (.getPath dir) :recursive true}])
+                      index/prune!       (fn [_] {:removed ["/gone.txt"]})
+                      index/index-paths! (fn [paths opts]
+                                           (swap! calls conj [paths opts])
+                                           {:indexed 1 :chunks 2 :unchanged 3 :skipped 0 :errors []})]
+          (let [r (index/sweep!)]
+            (is (= 1 (:roots r)))
+            (is (= 1 (:present r)))
+            (is (= ["/gone.txt"] (:pruned r)))
+            (is (= 1 (:indexed r)))
+            (is (= 3 (:unchanged r)))
+            (testing "the present root is re-indexed with its recursive flag"
+              (is (= [[[(.getPath dir)] {:recursive true}]] @calls))))))
+      (finally (.delete dir)))))
+
+(deftest sweep-skips-prune-when-a-root-is-missing
+  (let [dir (temp-dir)]
+    (try
+      (with-redefs [roots/read-roots   (constantly [{:path (.getPath dir) :recursive true}
+                                                    {:path "/definitely/not/here" :recursive true}])
+                    index/prune!       (fn [_] (throw (AssertionError. "must not prune with a missing root")))
+                    index/index-paths! (fn [_ _] {:indexed 0 :chunks 0 :unchanged 1 :skipped 0 :errors []})]
+        (let [r (index/sweep!)]
+          (testing "the vanished root is counted but not present, and pruning is skipped"
+            (is (= 2 (:roots r)))
+            (is (= 1 (:present r)))
+            (is (= [] (:pruned r))))
+          (testing "present roots are still re-indexed"
+            (is (= 1 (:unchanged r))))))
+      (finally (.delete dir)))))
+
+(deftest sweep-with-no-roots-is-a-noop
+  (with-redefs [roots/read-roots   (constantly [])
+                index/prune!       (fn [_] (throw (AssertionError. "must not prune with no roots")))
+                index/index-paths! (fn [_ _] (throw (AssertionError. "must not index with no roots")))]
+    (let [r (index/sweep!)]
+      (is (= 0 (:roots r)))
+      (is (= 0 (:indexed r))))))
+
+(deftest sweep-groups-recursive-and-non-recursive-roots
+  (let [rdir (temp-dir)
+        fdir (temp-dir)]
+    (try
+      (let [calls (atom [])]
+        (with-redefs [roots/read-roots   (constantly [{:path (.getPath rdir) :recursive true}
+                                                      {:path (.getPath fdir) :recursive false}])
+                      index/prune!       (fn [_] {:removed []})
+                      index/index-paths! (fn [paths opts]
+                                           (swap! calls conj [(set paths) opts])
+                                           {:indexed 0 :chunks 0 :unchanged 0 :skipped 0 :errors []})]
+          (index/sweep!)
+          (testing "each recursive-flag group is one index-paths! call carrying that flag"
+            (is (= #{[#{(.getPath rdir)} {:recursive true}]
+                     [#{(.getPath fdir)} {:recursive false}]}
+                   (set @calls))))))
+      (finally (.delete rdir) (.delete fdir)))))

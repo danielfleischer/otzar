@@ -2,14 +2,27 @@
   "Tests for the Ring/reitit route surface. The rag.index facade is stubbed, so
   these exercise routing, request parsing, validation, status codes, and the
   error->JSON mapping — not Lucene."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [clojure.string :as str]
             [jsonista.core :as j]
             [ring.core.protocols :as rcp]
+            [rag.config :as config]
             [rag.http :as http]
             [rag.index :as index]))
 
 (def ^:private mapper (j/object-mapper {:decode-key-fn keyword}))
+
+;; POST /index records the requested paths to config/roots-file (rag.roots).
+;; Redirect that to a throwaway temp file — and neuter ensure-dir! so it doesn't
+;; re-tighten ~/.otzer — so no test here ever writes the real ~/.otzer/roots.edn.
+(use-fixtures :each
+  (fn [t]
+    (let [tmp (java.io.File/createTempFile "http-test-roots" ".edn")]
+      (try
+        (with-redefs [config/roots-file  tmp
+                      config/ensure-dir! (fn [] nil)]
+          (t))
+        (finally (.delete tmp))))))
 
 (defn- req
   "A Ring request map. `body`, if given, is JSON-encoded onto :body (a String,

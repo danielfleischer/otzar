@@ -7,6 +7,7 @@
   (:require [rag.http :as http]
             [rag.config :as config]
             [rag.index :as index]
+            [rag.watch :as watch]
             [ring.adapter.jetty :as jetty])
   (:import [java.io File])
   (:gen-class))
@@ -66,6 +67,9 @@
         server    (jetty/run-jetty (http/app) {:port 0 :join? false})
         port      (.getLocalPort (first (.getConnectors server)))]
     (write-port! port)
+    ;; Arm the background auto-reindex sweep if the user left watch enabled
+    ;; (persisted in watch.edn). No-op when it's off — the default.
+    (watch/init!)
     (.addShutdownHook (Runtime/getRuntime)
                       (Thread. (fn []
                                  (index/close!)

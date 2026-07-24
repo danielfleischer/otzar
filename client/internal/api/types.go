@@ -148,3 +148,38 @@ type PathsResult struct {
 	Count int      `json:"count"`
 	Paths []string `json:"paths"`
 }
+
+// WatchRequest is the body of POST /watch. IntervalS of 0 (omitted) tells the
+// server to keep the current/default interval; it is only meaningful with Enabled.
+type WatchRequest struct {
+	Enabled   bool `json:"enabled"`
+	IntervalS int  `json:"interval_s,omitempty"`
+}
+
+// WatchStatus is the body of GET /watch and the response to POST /watch: whether
+// the background auto-reindex sweep is armed, its interval in seconds, whether an
+// index run is happening right now, and a summary of the last sweep (if any).
+type WatchStatus struct {
+	Enabled     bool         `json:"enabled"`
+	IntervalS   int          `json:"interval_s"`
+	Indexing    bool         `json:"indexing"`
+	LastSweepAt int64        `json:"last_sweep_at,omitempty"` // epoch millis
+	LastResult  *SweepResult `json:"last_result,omitempty"`
+}
+
+// SweepResult summarises one background sweep (WatchStatus.LastResult). Skipped is
+// set when a run was already in progress and the sweep did nothing; Error is set
+// when the sweep itself threw. Otherwise the counts mirror an IndexResult folded
+// over every root, plus Pruned (orphan paths dropped when every root was present).
+type SweepResult struct {
+	Skipped      bool         `json:"skipped,omitempty"`
+	Roots        int          `json:"roots"`
+	Present      int          `json:"present"`
+	Pruned       []string     `json:"pruned,omitempty"`
+	Indexed      int          `json:"indexed"`
+	Chunks       int          `json:"chunks"`
+	Unchanged    int          `json:"unchanged"`
+	SkippedFiles int          `json:"skipped_files"`
+	Errors       []IndexError `json:"errors,omitempty"`
+	Error        string       `json:"error,omitempty"`
+}

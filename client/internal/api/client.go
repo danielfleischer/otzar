@@ -328,3 +328,23 @@ func (c *Client) Paths() (*PathsResult, error) {
 	}
 	return &p, nil
 }
+
+// Watch fetches GET /watch: the state of the background auto-reindex sweep.
+func (c *Client) Watch() (*WatchStatus, error) {
+	var w WatchStatus
+	if err := c.getJSON("/watch", &w); err != nil {
+		return nil, err
+	}
+	return &w, nil
+}
+
+// SetWatch posts to /watch to enable or disable the background sweep. When
+// enabling, intervalS > 0 sets the interval (seconds); 0 keeps the current/default.
+// Returns the resulting status.
+func (c *Client) SetWatch(enabled bool, intervalS int) (*WatchStatus, error) {
+	var w WatchStatus
+	if err := c.postJSON("/watch", WatchRequest{Enabled: enabled, IntervalS: intervalS}, &w); err != nil {
+		return nil, err
+	}
+	return &w, nil
+}

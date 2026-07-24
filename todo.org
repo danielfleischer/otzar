@@ -23,7 +23,17 @@
 8. [X] Dimension-change detection — currently surfaces as a cryptic Lucene throw rather than a clean "run clear-index"
    message.
 9. [X] Adding CLI sub-verbs to make it nicer.
-10. [ ] Schema versioning and reindex upon bump.
-11. [ ] Make the documentation consistent.
-12. [ ] Maybe a better name?
-13. [ ] Improve the README.
+10. [X] Maybe a better name?
+11. [-] Schema versioning and reindex upon bump.
+12. [X] File watcher? Landed as a periodic *sweep* rather than an OS watcher (macOS
+    JDK WatchService is polling anyway): =otzer server watch enable/disable/status=.
+    The server records index roots to =~/.otzer/roots.edn= and, when enabled, re-scans
+    them every =OTZER_WATCH_INTERVAL= (default 30m) via =rag.watch= → =index/sweep!=,
+    picking up new/changed files (the mtime+hash gate keeps an unchanged tree cheap —
+    no embedding, so Ollama's model never loads) and pruning deletes. Single-flighted
+    against manual =/index=; prune is skipped when a root has vanished so an unmounted
+    volume can't wipe its subtree. Toggle persists to =watch.edn= across restarts.
+13. [ ] Add =server restart=.
+14. [ ] rename to =otzar=.
+15. [ ] Make the documentation consistent.
+16. [ ] Improve the README.

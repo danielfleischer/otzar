@@ -195,6 +195,29 @@
   (some (fn [[k v]] (when (str/ends-with? (name k) ".embedding_length") v))
         (:model_info (ollama-show model))))
 
+;; Model metadata is stable for a process — config/embed-model is read once at
+;; startup, and a model's embedding dimension is intrinsic to its architecture — so
+;; the /api/tags + /api/show probes behind embedding-dim/model-spec are cached for
+;; the process lifetime rather than re-run on every index (and every 30-minute watch
+;; sweep). Only a *complete* probe is cached: a degraded result from an
+;; Ollama-not-yet-up boot must be retried, not frozen in, or the index would stamp
+;; chunks with a bare model name and the dim gate stay disabled even once Ollama is
+;; back. Caveat: re-pulling the model in place (a new digest) while the server runs
+;; is not noticed until a restart calls reset-model-cache!; a deliberate model change
+;; is a restart anyway, and `otzer admin reindex --force` re-embeds regardless.
+(def ^:private dim-cache  (atom nil))
+(def ^:private spec-cache (atom nil))
+
+(defn reset-model-cache!
+  "-> nil
+  Forget the cached model dimension and spec so the next call re-probes Ollama.
+  Called on nothing today (the cache is process-lifetime by design); a hook for
+  tests and for a future in-place re-pull that must be picked up without a restart."
+  []
+  (reset! dim-cache nil)
+  (reset! spec-cache nil)
+  nil)
+
 (defn embedding-dim
   "-> long | nil
   The embedding dimension the *currently configured* model produces, per Ollama's
@@ -202,9 +225,15 @@
   Lets rag.index detect a model dimension change against the index up front —
   before embedding a whole tree — since Lucene can't mix vector dimensions in one
   field. Best-effort by design: a nil just means the pre-check is skipped and any
-  real mismatch surfaces at the Lucene write instead."
+  real mismatch surfaces at the Lucene write instead.
+
+  Cached once known (see the cache note above): a nil is retried on the next call
+  (Ollama may not have been up yet), a real dimension is served without re-probing."
   []
-  (model-dim config/embed-model))
+  (or @dim-cache
+      (let [d (model-dim config/embed-model)]
+        (when d (reset! dim-cache d))
+        d)))
 
 (defn model-spec
   "-> str
@@ -216,10 +245,17 @@
   on a re-pull), <dim> the embedding dimension (a change here means the whole Lucene
   vector field must be rebuilt, not just re-embedded). Any part Ollama won't report
   is omitted; if it's unreachable for metadata this degrades to the bare model name,
-  so indexing still runs. Compared by plain string equality (rag.index/file->chunks)."
+  so indexing still runs. Compared by plain string equality (rag.index/file->chunks).
+
+  Cached once *complete* (both digest and dim resolved): repeat calls — every index
+  run and every watch sweep — are served without re-probing Ollama. A degraded
+  (partial) spec is returned but not cached, so it is retried once Ollama is up."
   []
-  (let [digest (tag-digest config/embed-model)
-        dim    (model-dim config/embed-model)]
-    (str config/embed-model
-         (when digest (str "@" digest))
-         (when dim (str "/" dim "d")))))
+  (or @spec-cache
+      (let [digest (tag-digest config/embed-model)
+            dim    (embedding-dim)   ; shares the dim cache
+            spec   (str config/embed-model
+                        (when digest (str "@" digest))
+                        (when dim (str "/" dim "d")))]
+        (when (and digest dim) (reset! spec-cache spec))
+        spec)))

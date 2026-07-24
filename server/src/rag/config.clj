@@ -10,6 +10,14 @@
 (def otzer-dir (io/file home-dir ".otzer"))
 (def port-file (io/file otzer-dir "server.port"))
 (def index-dir (io/file otzer-dir "index"))
+(def roots-file
+  "Persisted set of index roots — the paths /index was asked to index, so the
+  watch sweep (rag.watch) knows what to re-scan. See rag.roots."
+  (io/file otzer-dir "roots.edn"))
+(def watch-file
+  "Persisted watch toggle (enabled + interval), read at boot so the background
+  sweep survives a server restart. See rag.watch."
+  (io/file otzer-dir "watch.edn"))
 
 (def ^:private owner-only
   "rwx------ — the owner may read/list/enter ~/.otzer; nobody else can."
@@ -81,3 +89,12 @@
   set high enough server-side to honor them); past that it thrashes. Override with
   OTZER_EMBED_CONCURRENCY."
   (int (or (some-> (System/getenv "OTZER_EMBED_CONCURRENCY") Long/parseLong) 8)))
+
+(def watch-interval-s
+  "Default interval, in seconds, between background watch sweeps (rag.watch) — the
+  auto-reindex of the persisted roots. 30 minutes by default: a sweep over an
+  unchanged tree is cheap (a stat + metadata lookup per file, no embedding, so the
+  Ollama model is never loaded), so this only bounds how quickly a real change is
+  picked up. Override with OTZER_WATCH_INTERVAL. The client can set a per-user value
+  (persisted to watch.edn) that takes precedence over this default."
+  (or (some-> (System/getenv "OTZER_WATCH_INTERVAL") Long/parseLong) 1800))
