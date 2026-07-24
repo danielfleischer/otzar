@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"otzer/internal/api"
-	"otzer/internal/render"
+	"otzar/internal/api"
+	"otzar/internal/render"
 )
 
 var (

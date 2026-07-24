@@ -1,9 +1,9 @@
 // Package lifecycle owns the server process: locating it, spawning the JVM,
-// tracking it via PID/port files under ~/.otzer, and tearing it down.
+// tracking it via PID/port files under ~/.otzar, and tearing it down.
 //
 // Contract with the server (see server/src/rag/config.clj): the server picks a
-// free port and writes ~/.otzer/server.port; this client writes the child PID
-// to ~/.otzer/server.pid. The port file is the source of truth for "where is
+// free port and writes ~/.otzar/server.port; this client writes the child PID
+// to ~/.otzar/server.pid. The port file is the source of truth for "where is
 // the server"; the pid file is how we signal it if /shutdown is unavailable.
 package lifecycle
 
@@ -22,7 +22,7 @@ import (
 
 func dir() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".otzer")
+	return filepath.Join(home, ".otzar")
 }
 
 func PortFile() string { return filepath.Join(dir(), "server.port") }
@@ -80,14 +80,14 @@ func processAlive(pid int) bool {
 }
 
 // serverDir is the absolute path to the Clojure server dir, baked in at build
-// time via -ldflags (-X otzer/internal/lifecycle.serverDir=...); see Makefile.
+// time via -ldflags (-X otzar/internal/lifecycle.serverDir=...); see Makefile.
 // Empty when built without that flag (plain `go build`, `go test`).
 var serverDir string
 
 // resolveServerDir finds the Clojure server directory. During development the
 // server lives at <repo>/server; once we ship an uberjar this goes away.
 func resolveServerDir() (string, error) {
-	if d := os.Getenv("OTZER_SERVER_DIR"); d != "" {
+	if d := os.Getenv("OTZAR_SERVER_DIR"); d != "" {
 		return d, nil
 	}
 	if _, err := os.Stat(filepath.Join("server", "deps.edn")); err == nil {
@@ -104,15 +104,15 @@ func resolveServerDir() (string, error) {
 			return filepath.Abs(cand)
 		}
 	}
-	return "", errors.New("cannot locate the Clojure server; set OTZER_SERVER_DIR to <repo>/server")
+	return "", errors.New("cannot locate the Clojure server; set OTZAR_SERVER_DIR to <repo>/server")
 }
 
 // ErrAlreadyRunning is returned by Start when a healthy server already exists.
-// Callers that only need to *ensure* a server is up (e.g. `otzer mcp`) should
+// Callers that only need to *ensure* a server is up (e.g. `otzar mcp`) should
 // treat it as success rather than a failure.
 var ErrAlreadyRunning = errors.New("server already running")
 
-// acquireStartLock takes an exclusive advisory lock on ~/.otzer/start.lock,
+// acquireStartLock takes an exclusive advisory lock on ~/.otzar/start.lock,
 // retrying until it is acquired or `timeout` elapses. The returned func releases
 // it. It serializes server startup across processes.
 func acquireStartLock(timeout time.Duration) (func(), error) {
@@ -157,11 +157,11 @@ func Start(timeout time.Duration) error {
 	if err := os.MkdirAll(dir(), 0o700); err != nil {
 		return err
 	}
-	// Lock ~/.otzer to the owner, tightening it even if it pre-existed with
+	// Lock ~/.otzar to the owner, tightening it even if it pre-existed with
 	// looser bits (MkdirAll won't chmod an existing dir).
 	_ = os.Chmod(dir(), 0o700)
 
-	// Serialize startup across processes. Without this, several cold `otzer mcp`
+	// Serialize startup across processes. Without this, several cold `otzar mcp`
 	// launches — an LLM host opening multiple sessions, or the MCP Inspector
 	// reconnecting — each see "not healthy" during the ~10-40s JVM boot and spawn
 	// their own server; the duplicates then collide on Lucene's single-writer

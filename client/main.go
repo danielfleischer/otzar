@@ -1,6 +1,6 @@
 package main
 
-import "otzer/internal/cmd"
+import "otzar/internal/cmd"
 
 func main() {
 	cmd.Execute()

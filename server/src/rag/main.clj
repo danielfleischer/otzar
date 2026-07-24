@@ -1,6 +1,6 @@
 (ns rag.main
   "Entry point. Binds Jetty to an ephemeral port (0), discovers the actual port
-  from the connector, and publishes it to ~/.otzer/server.port so the Go client
+  from the connector, and publishes it to ~/.otzar/server.port so the Go client
   can find us. Optionally (dev only — see start-nrepl!) starts a loopback nREPL so
   CIDER can attach to the *running* server and redefine code live. The client owns
   process lifecycle; /shutdown handles exit."
@@ -75,5 +75,5 @@
                                  (index/close!)
                                  (stop-nrepl! nrepl-srv)
                                  (.delete config/port-file))))
-    (println "otzer server listening on port" port)
+    (println "otzar server listening on port" port)
     (.join server)))

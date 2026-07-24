@@ -1,6 +1,6 @@
 (ns rag.roots
-  "Persisted set of index roots — the paths the user has asked otzer to index,
-  saved to ~/.otzer/roots.edn. The Lucene index stores per-file paths, not roots,
+  "Persisted set of index roots — the paths the user has asked otzar to index,
+  saved to ~/.otzar/roots.edn. The Lucene index stores per-file paths, not roots,
   so this is the only record of an *intent* like \"index ~/notes recursively\" as a
   unit. /index records each requested path here (rag.http); the background sweep
   (rag.watch → rag.index/sweep!) reads them back to know what tree to re-scan for

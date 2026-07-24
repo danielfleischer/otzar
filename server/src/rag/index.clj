@@ -47,7 +47,7 @@
 
 (defn ensure!
   "-> component
-  Return the open Lucene component, opening it under ~/.otzer/index on first use.
+  Return the open Lucene component, opening it under ~/.otzar/index on first use.
   Thread-safe: concurrent callers race to open, and the loser's value is dropped."
   []
   (or @component
@@ -59,8 +59,8 @@
        "the configured model now produces " configured "-dim. Lucene can't mix "
        "vector dimensions in one field, so switching embedding models needs a full "
        "re-index:\n"
-       "  otzer admin clear\n"
-       "  otzer index <paths…>"))
+       "  otzar admin clear\n"
+       "  otzar index <paths…>"))
 
 (defn- ensure-dim!
   "Fail fast when the index already holds vectors of a different dimension than
@@ -92,7 +92,7 @@
     ::unchanged  already indexed with identical content — skip the costly embed.
   Change detection is model-spec → mtime → content-hash. `spec` is the identity of
   the embedding model we'd use now (embed/model-spec); a prior chunk is *reusable*
-  only if it was embedded with that same spec — switching OTZER_EMBED_MODEL (or a
+  only if it was embedded with that same spec — switching OTZAR_EMBED_MODEL (or a
   re-pull that bumps the digest) makes the stored vectors stale, so it forces a
   re-embed even when the bytes are untouched. Given a reusable prior: if the file's
   mtime still matches, it's skipped *without even reading it*; otherwise we read +
@@ -100,7 +100,7 @@
   Only genuinely new/changed/re-modelled files reach the embedder, whose vectors are
   attached as :embedding; every chunk also carries :content_sha1 and :model_spec for
   next time. (A change in embedding *dimension* additionally requires a full reset
-  — `otzer admin clear`, then re-index — since Lucene stores one vector dimension
+  — `otzar admin clear`, then re-index — since Lucene stores one vector dimension
   per field.)
   `force?` bypasses all of that: every file is re-extracted, re-chunked and
   re-embedded even when nothing changed. It's the escape hatch for changes the
@@ -401,7 +401,7 @@
       safety valve against mass deletion: if a root has vanished (an unmounted
       volume, a moved directory) every file under it would look like an orphan, so
       rather than delete a whole subtree we skip pruning this tick and leave it to a
-      manual `otzer admin prune`. A genuine single-file delete is picked up on the
+      manual `otzar admin prune`. A genuine single-file delete is picked up on the
       next sweep once the picture is unambiguous.
     - Re-index every present root. The change gate in file->chunks makes an
       unchanged tree cheap — a stat + doc-meta lookup per file, no embedding, so the

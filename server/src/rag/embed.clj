@@ -105,7 +105,7 @@
 
 ;; bge-m3 is symmetric — documents and queries are embedded as raw text, no task
 ;; prompts. (Some models, e.g. EmbeddingGemma, need asymmetric document/query
-;; prompts for the two vector spaces to line up; if OTZER_EMBED_MODEL changes to
+;; prompts for the two vector spaces to line up; if OTZAR_EMBED_MODEL changes to
 ;; such a model, reintroduce per-side prompting in embed-documents/embed-query.)
 
 (defn- embed-prepared
@@ -204,7 +204,7 @@
 ;; chunks with a bare model name and the dim gate stay disabled even once Ollama is
 ;; back. Caveat: re-pulling the model in place (a new digest) while the server runs
 ;; is not noticed until a restart calls reset-model-cache!; a deliberate model change
-;; is a restart anyway, and `otzer admin reindex --force` re-embeds regardless.
+;; is a restart anyway, and `otzar admin reindex --force` re-embeds regardless.
 (def ^:private dim-cache  (atom nil))
 (def ^:private spec-cache (atom nil))
 

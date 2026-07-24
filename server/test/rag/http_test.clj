@@ -14,7 +14,7 @@
 
 ;; POST /index records the requested paths to config/roots-file (rag.roots).
 ;; Redirect that to a throwaway temp file — and neuter ensure-dir! so it doesn't
-;; re-tighten ~/.otzer — so no test here ever writes the real ~/.otzer/roots.edn.
+;; re-tighten ~/.otzar — so no test here ever writes the real ~/.otzar/roots.edn.
 (use-fixtures :each
   (fn [t]
     (let [tmp (java.io.File/createTempFile "http-test-roots" ".edn")]
@@ -120,18 +120,18 @@
 (deftest query-dimension-mismatch-is-400-with-remediation
   (testing "a dimension-mismatch ex-info from search maps to 400, message + data intact"
     (with-redefs [index/search (fn [_]
-                                 (throw (ex-info "dim changed\n  otzer admin clear\n  otzer index <paths…>"
+                                 (throw (ex-info "dim changed\n  otzar admin clear\n  otzar index <paths…>"
                                                  {:type :dimension-mismatch :indexed 1024 :configured 768})))]
       (let [resp (call (req :post "/query" {:q "x" :mode "vector"}))
             body (json-body resp)]
         (is (= 400 (:status resp)))
-        (is (str/includes? (:error body) "otzer admin clear"))
+        (is (str/includes? (:error body) "otzar admin clear"))
         (is (= "dimension-mismatch" (get-in body [:data :type])))))))
 
 (deftest index-dimension-mismatch-is-a-stream-error-event
   (testing "a mismatch during indexing arrives as the terminal NDJSON error event"
     (with-redefs [index/index-paths!
-                  (fn [& _] (throw (ex-info "dim changed\n  otzer admin clear" {:type :dimension-mismatch})))]
+                  (fn [& _] (throw (ex-info "dim changed\n  otzar admin clear" {:type :dimension-mismatch})))]
       (let [resp (call (req :post "/index" {:paths ["/a.md"]}))
             out  (java.io.ByteArrayOutputStream.)]
         (rcp/write-body-to-stream (:body resp) resp out)
@@ -139,7 +139,7 @@
                           (remove str/blank?)
                           (mapv #(j/read-value (str/trim %) mapper)))]
           (is (= "error" (:type (last events))))
-          (is (str/includes? (:error (last events)) "otzer admin clear")))))))
+          (is (str/includes? (:error (last events)) "otzar admin clear")))))))
 
 (deftest unknown-route-404
   (is (= 404 (:status (call (req :get "/no-such-route"))))))

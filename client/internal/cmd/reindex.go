@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"otzer/internal/api"
-	"otzer/internal/render"
+	"otzar/internal/api"
+	"otzar/internal/render"
 )
 
 var (
@@ -26,11 +26,11 @@ re-index it re-embeds every file even when nothing changed.
 Reach for it after a change the incremental index can't detect on its own: a new
 chunker, a chunk-schema field, or a switch to a different embedding model of the
 same vector dimension. A change in embedding *dimension* can't be applied in
-place — run 'otzer admin clear' first, then index.
+place — run 'otzar admin clear' first, then index.
 
 Re-embedding calls the embedder for every chunk and can take a while, so reindex
 confirms first; pass --yes to skip. Files deleted from disk since indexing are
-skipped silently (use 'otzer admin prune' to drop them).`,
+skipped silently (use 'otzar admin prune' to drop them).`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Re-embedding a whole index is slow, but IndexStream is bounded by silence

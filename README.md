@@ -1,12 +1,11 @@
-# otzer
+# otzar
 
-*otzer* (אוֹצֵר) is Hebrew for **curator** — and its close cousin *otzar* (אוֹצָר)
-means *treasure* or *thesaurus*.
+*otzar* (אוֹצָר) is Hebrew for **treasure** — and, fittingly, *thesaurus*.
 
 A personal **hybrid retrieval system** — dense vector similarity + keyword (BM25)
 + metadata filters over your local files, in one query. A Clojure/Lucene server
 holds the index; a Go/Cobra CLI controls its lifecycle and is the primary UX. The
-same Go binary also speaks MCP (`otzer mcp`) so LLM hosts can search the index as
+same Go binary also speaks MCP (`otzar mcp`) so LLM hosts can search the index as
 a tool.
 
 See [`docs/rag-project-plan.md`](docs/rag-project-plan.md) for the full design and
@@ -25,26 +24,26 @@ text, markdown, code, and PDF. Local-only, single-user, no auth — by design.
   Clojure CLI.
 - Go ≥ 1.26.
 - [Ollama](https://ollama.com), for embeddings. Pull the default model with
-  `ollama pull bge-m3` (1024-dim); override with `OTZER_EMBED_MODEL`. `bge-m3` is
+  `ollama pull bge-m3` (1024-dim); override with `OTZAR_EMBED_MODEL`. `bge-m3` is
   the default for its strong multilingual coverage — notably Hebrew, which most
   small English-first embedding models handle poorly.
 
 ## Build & run
 
 ```sh
-make build          # compile the client -> bin/otzer
+make build          # compile the client -> bin/otzar
 make server-deps    # one-time: pre-fetch JVM deps (optional, speeds first start)
 ```
 
-The client locates the server source via `<repo>/server` (or `$OTZER_SERVER_DIR`)
+The client locates the server source via `<repo>/server` (or `$OTZAR_SERVER_DIR`)
 and boots the JVM on demand.
 
 ### Server lifecycle
 
 ```sh
-./bin/otzer server start    # boot the server (background JVM)
-./bin/otzer server status   # health + index stats
-./bin/otzer server stop     # graceful shutdown
+./bin/otzar server start    # boot the server (background JVM)
+./bin/otzar server status   # health + index stats
+./bin/otzar server stop     # graceful shutdown
 ```
 
 Most commands start the server automatically if it isn't running, so an explicit
@@ -53,9 +52,9 @@ Most commands start the server automatically if it isn't running, so an explicit
 ### Index
 
 ```sh
-./bin/otzer index notes.md report.pdf   # index individual files
-./bin/otzer index -r ~/notes            # descend into a directory
-./bin/otzer index -f ~/notes            # force re-embed even if unchanged
+./bin/otzar index notes.md report.pdf   # index individual files
+./bin/otzar index -r ~/notes            # descend into a directory
+./bin/otzar index -f ~/notes            # force re-embed even if unchanged
 ```
 
 Unchanged files are skipped on re-index. On a TTY you get a live per-file chunk
@@ -69,10 +68,10 @@ live in one registry, `server/src/rag/index/extractor.clj`, if you want to add o
 ### Query
 
 ```sh
-./bin/otzer query "vector database tradeoffs"          # hybrid (default)
-./bin/otzer query -m keyword "exact phrase"            # BM25 only
-./bin/otzer query -m vector "semantically similar"     # kNN only
-./bin/otzer query -k 5 -e md,txt -p ~/notes/ "topic"   # top-5, filtered
+./bin/otzar query "vector database tradeoffs"          # hybrid (default)
+./bin/otzar query -m keyword "exact phrase"            # BM25 only
+./bin/otzar query -m vector "semantically similar"     # kNN only
+./bin/otzar query -k 5 -e md,txt -p ~/notes/ "topic"   # top-5, filtered
 ```
 
 `--mode` picks the retriever (`hybrid` | `keyword` | `vector`); `--ext`, `--path`,
@@ -85,16 +84,16 @@ Hits print with the location to cite, in whatever unit the source actually has �
 ### Admin (index maintenance)
 
 ```sh
-./bin/otzer admin stats     # documents and chunks in the index
-./bin/otzer admin prune     # drop indexed files that no longer exist on disk
-./bin/otzer admin clear     # wipe the entire index
-./bin/otzer admin reindex   # re-embed everything (after a chunker/model change)
+./bin/otzar admin stats     # documents and chunks in the index
+./bin/otzar admin prune     # drop indexed files that no longer exist on disk
+./bin/otzar admin clear     # wipe the entire index
+./bin/otzar admin reindex   # re-embed everything (after a chunker/model change)
 ```
 
 ### MCP
 
 ```sh
-./bin/otzer mcp             # speak MCP over stdio (launched by an LLM host)
+./bin/otzar mcp             # speak MCP over stdio (launched by an LLM host)
 ```
 
 `mcp` exposes read-only tools — `search`, `get_document`, `list_indexed_paths` —
@@ -106,11 +105,11 @@ server automatically and leaves it running when the host disconnects.
 Cobra generates completion scripts for bash, zsh, fish, and PowerShell. For fish:
 
 ```sh
-./bin/otzer completion fish | source                       # current shell
-./bin/otzer completion fish > ~/.config/fish/completions/otzer.fish   # persist
+./bin/otzar completion fish | source                       # current shell
+./bin/otzar completion fish > ~/.config/fish/completions/otzar.fish   # persist
 ```
 
-Run `otzer completion --help` for the other shells.
+Run `otzar completion --help` for the other shells.
 
 ## Layout
 

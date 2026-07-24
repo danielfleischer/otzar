@@ -1,11 +1,11 @@
 (ns rag.watch
   "Background auto-reindex — a periodic sweep of the persisted roots (rag.roots) so
-  new, changed, and deleted files are picked up without a manual `otzer index`. The
+  new, changed, and deleted files are picked up without a manual `otzar index`. The
   sweep itself lives in rag.index/sweep! (which is single-flighted against manual
   indexing); this namespace owns only the *scheduling* and the *toggle*:
 
     - a single-thread ScheduledExecutorService that fires sweep! on an interval;
-    - an enabled/interval setting persisted to ~/.otzer/watch.edn, read at boot so
+    - an enabled/interval setting persisted to ~/.otzar/watch.edn, read at boot so
       the toggle survives a server restart;
     - the last sweep's timestamp + summary, for GET /watch.
 
@@ -50,7 +50,7 @@
 
 (def ^:private thread-factory
   (reify ThreadFactory
-    (newThread [_ r] (doto (Thread. r "otzer-watch") (.setDaemon true)))))
+    (newThread [_ r] (doto (Thread. r "otzar-watch") (.setDaemon true)))))
 
 (defn- disarm!
   "Cancel the running schedule (if any) and drop the executor."

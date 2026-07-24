@@ -9,7 +9,7 @@
 
 (defn- tmp-index-fixture
   "Open a Lucene index in a throwaway directory for one test, then close it and
-  delete the directory. Isolated from ~/.otzer — nothing here touches the real
+  delete the directory. Isolated from ~/.otzar — nothing here touches the real
   index."
   [f]
   (let [dir (.toFile (Files/createTempDirectory "lucene-test" (make-array FileAttribute 0)))

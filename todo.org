@@ -17,7 +17,7 @@
 5. [X] CLI flags short version =-e= instead of =--ext=. Added short flags across =query= (-k -m -e -p -a -j) and -j on =index=.
 6. [X] surface =score_breakdown= in the client. Added =ScoreBreakdown= (nullable keyword/vector) to the Go =Hit= struct so
    =query --json= now carries it; omitempty keeps non-hybrid hits clean. Table view unchanged (--json only).
-7. [X] Orphan cleanup on file delete/rename. Landed as =otzer prune=: POST /prune walks the indexed paths, deletes chunks
+7. [X] Orphan cleanup on file delete/rename. Landed as =otzar prune=: POST /prune walks the indexed paths, deletes chunks
    for any whose source file is gone from disk (=lucene/delete-by-paths!=), then =reclaim-deletes!= expunges them so
    =list_indexed_paths= / stats stop counting them. =--dry-run= previews; renames surface as an orphan at the old path.
 8. [X] Dimension-change detection — currently surfaces as a cryptic Lucene throw rather than a clean "run clear-index"
@@ -26,14 +26,14 @@
 10. [X] Maybe a better name?
 11. [-] Schema versioning and reindex upon bump.
 12. [X] File watcher? Landed as a periodic *sweep* rather than an OS watcher (macOS
-    JDK WatchService is polling anyway): =otzer server watch enable/disable/status=.
-    The server records index roots to =~/.otzer/roots.edn= and, when enabled, re-scans
-    them every =OTZER_WATCH_INTERVAL= (default 30m) via =rag.watch= → =index/sweep!=,
+    JDK WatchService is polling anyway): =otzar server watch enable/disable/status=.
+    The server records index roots to =~/.otzar/roots.edn= and, when enabled, re-scans
+    them every =OTZAR_WATCH_INTERVAL= (default 30m) via =rag.watch= → =index/sweep!=,
     picking up new/changed files (the mtime+hash gate keeps an unchanged tree cheap —
     no embedding, so Ollama's model never loads) and pruning deletes. Single-flighted
     against manual =/index=; prune is skipped when a root has vanished so an unmounted
     volume can't wipe its subtree. Toggle persists to =watch.edn= across restarts.
 13. [ ] Add =server restart=.
-14. [ ] rename to =otzar=.
+14. [X] rename to =otzar=.
 15. [ ] Make the documentation consistent.
 16. [ ] Improve the README.

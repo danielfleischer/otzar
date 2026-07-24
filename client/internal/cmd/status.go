@@ -6,9 +6,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"otzer/internal/api"
-	"otzer/internal/lifecycle"
-	"otzer/internal/render"
+	"otzar/internal/api"
+	"otzar/internal/lifecycle"
+	"otzar/internal/render"
 )
 
 var statusJSON bool

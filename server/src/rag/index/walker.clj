@@ -14,7 +14,7 @@
   "Directory names never descended into during a recursive walk."
   #{".git" ".hg" ".svn" "node_modules" "target" "dist" "build" "out"
     ".clj-kondo" ".lsp" ".cpcache" "__pycache__" ".idea" ".vscode"
-    ".gradle" ".mvn" "vendor" ".otzer"})
+    ".gradle" ".mvn" "vendor" ".otzar"})
 
 (defn indexable-file?
   "File -> bool

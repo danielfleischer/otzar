@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"otzer/internal/api"
+	"otzar/internal/api"
 )
 
 // Drives the multi-line bar through two files embedding concurrently, checks that

@@ -65,7 +65,7 @@
     which the prune path uses to drop chunks for source files removed/renamed on
     disk (todo.org #8); reclaim-deletes! then expunges them so the term-dictionary
     reads (paths, stats) stop counting the removed files. clear! wipes the whole
-    index in one call (deleteAll) — the full reset behind `otzer admin clear`."
+    index in one call (deleteAll) — the full reset behind `otzar admin clear`."
   (:import [org.apache.lucene.store FSDirectory]
            [org.apache.lucene.index IndexWriter IndexWriterConfig LeafReaderContext
             MultiTerms Term VectorSimilarityFunction]

@@ -3,7 +3,7 @@ package cmd
 import (
 	"testing"
 
-	"otzer/internal/api"
+	"otzar/internal/api"
 )
 
 // A hit is only worth showing if the user can go look at it, and the form that

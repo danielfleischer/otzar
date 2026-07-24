@@ -24,11 +24,11 @@
  {:run  {:jvm-opts  ["-Xms64m" "-Xmx512m" "-XX:+UseSerialGC" "-XX:+ExitOnOutOfMemoryError"]
          :main-opts ["-m" "rag.main"]}
   ;; Live-coding: puts nREPL + CIDER on the classpath and flips them on
-  ;; (-Dotzer.nrepl=true) so rag.main starts the loopback nREPL. Layer over :run
+  ;; (-Dotzar.nrepl=true) so rag.main starts the loopback nREPL. Layer over :run
   ;; to boot a dev server CIDER can attach to: `clojure -M:dev:run`.
   :dev  {:extra-deps {nrepl/nrepl       {:mvn/version "1.7.0"}
                       cider/cider-nrepl {:mvn/version "0.61.0"}}
-         :jvm-opts   ["-Dotzer.nrepl=true"]}
+         :jvm-opts   ["-Dotzar.nrepl=true"]}
   ;; Compile-only classpath: no :main-opts, so `make check-server` can load every
   ;; ns without booting the server. rag.main no longer statically requires nREPL,
   ;; so nothing extra is needed to compile it.

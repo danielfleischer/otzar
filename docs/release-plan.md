@@ -1,6 +1,6 @@
 # Open-source release plan
 
-Working checklist toward publishing `otzer`. Grouped by theme, roughly ordered
+Working checklist toward publishing `otzar`. Grouped by theme, roughly ordered
 by what blocks a public release vs. what can follow. Findings from the
 pre-release review (see session notes); `docs/api.md` was found accurate and is
 the source of truth — leave it as-is.
@@ -39,15 +39,17 @@ the source of truth — leave it as-is.
 
 - [ ] `CONTRIBUTING.md` (build, test, how the two toolchains fit together).
 - [ ] CI workflow — build + test both `server/` (Clojure) and `client/` (Go).
-- [x] README section on shell-completion install (`otzer completion fish | source`).
-- [x] Decide on the name. Renamed `myrag` → **`otzer`** (אוֹצֵר, Hebrew for
-      *curator*; cf. *otzar*, treasure/thesaurus). Renamed with it: the binary, the
-      Go module path, the `MYRAG_*` env vars → `OTZER_*`, the `myrag.nrepl` system
-      property, and the state dir `~/.myrag` → `~/.otzer`. The Clojure namespaces
-      stay `rag.*` (internal and generic) and the repo checkout dir is unchanged.
+- [x] README section on shell-completion install (`otzar completion fish | source`).
+- [x] Decide on the name. Renamed `myrag` → **`otzar`** (אוֹצָר, Hebrew for
+      *treasure*/*thesaurus*). Picked over *otzer* (אוֹצֵר, curator), which is
+      ambiguous — depending on the vowels it also reads as *curfew* (עוֹצֵר);
+      *otzar* is unambiguous. Renamed with it: the binary, the Go module path, the
+      `MYRAG_*` env vars → `OTZAR_*`, the `myrag.nrepl` system property, and the
+      state dir `~/.myrag` → `~/.otzar`. The Clojure namespaces stay `rag.*`
+      (internal and generic) and the repo checkout dir is unchanged.
       Note for existing installs: the state dir move orphans the old index — either
-      `mv ~/.myrag ~/.otzer` or clear and re-index, and delete the stale
-      `~/.local/bin/myrag`.
+      `mv ~/.otzer ~/.otzar` or clear and re-index, and delete the stale
+      `~/.local/bin/otzer`.
 
 ## 3. Test coverage gaps
 
@@ -79,7 +81,7 @@ Not release blockers, but worth tracking as the public roadmap:
       `notes.md:42-47` or `paper.pdf p.4`. Adding docx paragraphs is one registry
       entry plus one `segmenter/unit-separator` entry.
       Note: this renames wire fields, so chunks indexed before it lose their
-      citation span (hits render as a bare path) until `otzer index --force`.
+      citation span (hits render as a bare path) until `otzar index --force`.
       Still open: HTML is indexed as raw markup, tags and all, and docx isn't
       claimed at all.
 - [ ] Tags — schema reserves a `tags` field but nothing populates or filters on it.
@@ -91,6 +93,6 @@ Not release blockers, but worth tracking as the public roadmap:
 
 - No tracked file contains personal paths, emails, or secrets. `.clj-kondo`
   cache (which has hardcoded `/Users/...` paths) is gitignored, not tracked.
-- Paths derive from `user.home` → `~/.otzer/`; nothing machine-specific baked in.
+- Paths derive from `user.home` → `~/.otzar/`; nothing machine-specific baked in.
 - Local-only / single-user / no-auth is a documented design decision, not a gap.
 - `docs/api.md` matches the actual routes exactly.

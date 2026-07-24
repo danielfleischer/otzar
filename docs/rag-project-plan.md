@@ -2,7 +2,7 @@
 
 A personal project: a hybrid (vector + metadata + keyword) retrieval system with a
 Clojure server, a Go CLI client that controls its lifecycle, and JSON over HTTP
-between them. The same Go binary also ships an MCP server (`otzer mcp`) so any LLM
+between them. The same Go binary also ships an MCP server (`otzar mcp`) so any LLM
 host (Claude Desktop, Claude Code, Cursor, …) can search the user's local index as a
 tool. This document is the starting point — decisions can change as the project
 evolves, but it captures the shape we agreed on and the tradeoffs behind each choice.
@@ -17,7 +17,7 @@ evolves, but it captures the shape we agreed on and the tradeoffs behind each ch
 - Client controls server lifecycle (start, stop, status) and is the primary UX.
 - Results returned as JSON.
 - LLM hosts can use the index as a tool via an MCP server bundled into the same
-  Go binary (`otzer mcp`).
+  Go binary (`otzar mcp`).
 
 **Non-goals (for v1)**
 - Distributed deployment, replication, sharding.
@@ -48,12 +48,12 @@ evolves, but it captures the shape we agreed on and the tradeoffs behind each ch
 ┌──────────────┐
 │ LLM host     │  (Claude Desktop / Code, Cursor, …)
 │ launches     │
-│ `otzer mcp`  │
+│ `otzar mcp`  │
 └──────────────┘
 ```
 
 Three processes in normal CLI usage; when an LLM host is in the loop it launches a
-short-lived `otzer mcp` process (same binary, different subcommand) over stdio that
+short-lived `otzar mcp` process (same binary, different subcommand) over stdio that
 proxies MCP tool calls to the running Clojure server.
 
 ## 3. Component choices & rationale
@@ -80,7 +80,7 @@ keyword. Vespa — overkill.
 
 ### 3.3 Client — Go + Cobra
 
-- **Free shell completions.** `otzer completion {bash|zsh|fish|powershell}` is
+- **Free shell completions.** `otzar completion {bash|zsh|fish|powershell}` is
   generated from the same subcommand/flag definitions that drive dispatch — adding a
   flag automatically extends completions.
 - **Single static binary**, ~5–10 MB. No runtime to install. Drop in `~/bin`.
@@ -110,7 +110,7 @@ runtime or PyInstaller bundle).
   architectural redo.
 - Default model: `bge-m3` (1024-dim, runs on CPU). Chosen for its strong
   multilingual coverage — in particular it embeds Hebrew well, which most small
-  English-first embedding models do not. Override via the `OTZER_EMBED_MODEL` env
+  English-first embedding models do not. Override via the `OTZAR_EMBED_MODEL` env
   var; the Ollama URL via `OLLAMA_URL`.
 
 Alternatives kept in mind:
@@ -251,25 +251,25 @@ score-based fusion — we can revisit if RRF results feel off.
 ## 7. Client (Go + Cobra) — commands
 
 ```
-otzer server start                   # boot the server (background JVM process)
-otzer server stop                    # POST /shutdown, then verify exit
-otzer server status                  # GET /health and /stats
-otzer index <path> [--recursive]     # POST /index
-otzer admin stats                    # GET /stats — index size (docs, chunks)
-otzer admin prune [--dry-run]        # POST /prune — drop orphaned files
-otzer admin clear [--yes]            # DELETE /index — wipe the whole index
-otzer admin reindex [--yes]          # re-embed indexed paths via POST /index (force)
-otzer query "..." [--k N] [--ext md,txt] [--mode hybrid|vector|keyword]
-otzer query "..." --json             # raw JSON output for piping
-otzer completion {bash|zsh|fish|powershell}   # emit completion script
-otzer mcp                            # speak MCP over stdio (launched by LLM host)
+otzar server start                   # boot the server (background JVM process)
+otzar server stop                    # POST /shutdown, then verify exit
+otzar server status                  # GET /health and /stats
+otzar index <path> [--recursive]     # POST /index
+otzar admin stats                    # GET /stats — index size (docs, chunks)
+otzar admin prune [--dry-run]        # POST /prune — drop orphaned files
+otzar admin clear [--yes]            # DELETE /index — wipe the whole index
+otzar admin reindex [--yes]          # re-embed indexed paths via POST /index (force)
+otzar query "..." [--k N] [--ext md,txt] [--mode hybrid|vector|keyword]
+otzar query "..." --json             # raw JSON output for piping
+otzar completion {bash|zsh|fish|powershell}   # emit completion script
+otzar mcp                            # speak MCP over stdio (launched by LLM host)
 ```
 
-- `start` writes a PID file under `~/.otzer/server.pid` and a port file (server picks
+- `start` writes a PID file under `~/.otzar/server.pid` and a port file (server picks
   a free port and writes it). `stop`/`status`/`query` read the port file.
 - Default render: pretty table; `--json` for scripting.
 - `completion` is supplied automatically by Cobra; the user wires it into their
-  shell once (`otzer completion fish | source`, etc.).
+  shell once (`otzar completion fish | source`, etc.).
 - `mcp` is the entry point an LLM host launches as a subprocess; see §13.
 
 ## 8. Repository layout
@@ -322,7 +322,7 @@ rag/
         │   ├── query.go
         │   ├── admin.go            # `admin` group: stats.go, prune.go, clear.go, reindex.go
         │   ├── confirm.go          # shared destructive-op prompt
-        │   └── mcp.go              # `otzer mcp` — MCP-over-stdio adapter
+        │   └── mcp.go              # `otzar mcp` — MCP-over-stdio adapter
         ├── lifecycle/              # PID & port files, process spawn, signals
         │   └── lifecycle.go
         ├── api/                    # HTTP client, request/response types
@@ -337,7 +337,7 @@ rag/
 
 Build:
 - Server: `cd server && clj -M:run` (or `clj -T:build uber` for a fat JAR).
-- Client: `cd client && go build -o ../bin/otzer ./...`.
+- Client: `cd client && go build -o ../bin/otzar ./...`.
 - Top-level `Makefile` (optional) wires both: `make build`, `make run`, `make test`.
 
 The two sides are independently versioned in spirit but ship together — a single
@@ -383,7 +383,7 @@ A rough sequence — each milestone is independently runnable and demoable.
    `doc_id`, embedding-model-version invalidation.
 7. **M6 — fetch-by-id**: add `GET /document/:id` to the server (needed by the MCP
    `get_document` tool and for "open the source" UX in the CLI).
-8. **M7 — MCP server**: `otzer mcp` subcommand. Tools: `search`, `get_document`,
+8. **M7 — MCP server**: `otzar mcp` subcommand. Tools: `search`, `get_document`,
    `list_indexed_paths`. Lazily ensures the Clojure server is running via
    `lifecycle.go`. Verify end-to-end with at least one host (Claude Desktop or
    Claude Code).
@@ -396,7 +396,7 @@ A rough sequence — each milestone is independently runnable and demoable.
 ## 11. Open questions to resolve before / during M0
 
 - Embedding dimension — pin a dimension or stay configurable from day one?
-  Resolved: the model is configurable via `OTZER_EMBED_MODEL`, defaulting to
+  Resolved: the model is configurable via `OTZAR_EMBED_MODEL`, defaulting to
   `bge-m3` (1024-dim). The index inherits the dimension of the configured model;
   changing models requires a clear + reindex.
 - Single index vs. per-collection indexes. Default to single; revisit if cross-corpus
@@ -419,7 +419,7 @@ A rough sequence — each milestone is independently runnable and demoable.
 - Real-time file watching (inotify/fswatch).
 - Embedding cache for unchanged chunks across model upgrades.
 
-## 13. MCP server (`otzer mcp`)
+## 13. MCP server (`otzar mcp`)
 
 The MCP surface is bundled into the Go CLI as the `mcp` subcommand — same binary,
 same config, same release. The LLM host launches it as a subprocess over stdio; the
@@ -436,7 +436,7 @@ Among three options considered:
    variant awkward (the host launches a new process per session), and the HTTP/SSE
    variant has worse host compatibility. Clojure's MCP library ecosystem is also
    thinner than Go/Python/TypeScript.
-3. **MCP as a `otzer mcp` subcommand of the Go client.** Chosen. The Go binary
+3. **MCP as a `otzar mcp` subcommand of the Go client.** Chosen. The Go binary
    already has fast cold start (perfect for stdio launch), the HTTP client to talk
    to the Clojure server, and lifecycle code to start the server if it isn't
    running. The MCP layer is a ~200-line adapter, not a new component.
@@ -464,9 +464,9 @@ bad: *"Search."*).
 
 ### 13.4 Lifecycle behavior
 
-When `otzer mcp` starts:
+When `otzar mcp` starts:
 
-1. Read PID/port file under `~/.otzer/`.
+1. Read PID/port file under `~/.otzar/`.
 2. If server not running or `/health` fails: start it via `lifecycle.go` and wait
    for readiness (with a sane timeout).
 3. Initialize the MCP stdio server, register tools, enter the JSON-RPC loop.
@@ -475,7 +475,7 @@ When the host disconnects (stdin EOF):
 
 1. Exit cleanly.
 2. **Do not** stop the Clojure server — it may be in use by the CLI or another MCP
-   session. Server lifecycle stays under explicit user control via `otzer server stop`.
+   session. Server lifecycle stays under explicit user control via `otzar server stop`.
 
 ### 13.5 Host configuration (example)
 
@@ -484,8 +484,8 @@ For Claude Desktop / Claude Code:
 ```json
 {
   "mcpServers": {
-    "otzer": {
-      "command": "otzer",
+    "otzar": {
+      "command": "otzar",
       "args": ["mcp"]
     }
   }

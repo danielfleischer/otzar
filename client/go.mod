@@ -1,4 +1,4 @@
-module otzer
+module otzar
 
 go 1.26
 

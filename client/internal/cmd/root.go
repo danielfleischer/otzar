@@ -8,12 +8,12 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:           "otzer",
+	Use:           "otzar",
 	Short:         "Hybrid local document search (vector + keyword + metadata)",
-	Long: `otzer is the CLI for a personal hybrid retrieval system.
+	Long: `otzar is the CLI for a personal hybrid retrieval system.
 
 It controls the lifecycle of a local Clojure/Lucene server and queries it over
-HTTP. The same binary also speaks MCP (` + "`otzer mcp`" + `) so LLM hosts can search
+HTTP. The same binary also speaks MCP (` + "`otzar mcp`" + `) so LLM hosts can search
 your index as a tool.`,
 	SilenceUsage:  true,
 	SilenceErrors: true,

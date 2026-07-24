@@ -1,6 +1,6 @@
 (ns rag.roots-test
   "Tests for the persisted index-root set. config/roots-file and ensure-dir! are
-  redirected to a temp dir so nothing touches the real ~/.otzer."
+  redirected to a temp dir so nothing touches the real ~/.otzar."
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.java.io :as io]
             [rag.config :as config]
@@ -12,7 +12,7 @@
         file (io/file dir "roots.edn")]
     (.mkdirs dir)
     ;; redirect the persisted file and stub ensure-dir! so it only makes the temp
-    ;; dir (the real one re-tightens ~/.otzer permissions, which we don't want here)
+    ;; dir (the real one re-tightens ~/.otzar permissions, which we don't want here)
     (with-redefs [config/roots-file  file
                   config/ensure-dir! (fn [] (.mkdirs dir))]
       (try (f)

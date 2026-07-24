@@ -7,7 +7,7 @@ server/target/
 server/.nrepl-port
 
 # Go
-client/otzer
+client/otzar
 
 # Editor / tooling caches
 .clj-kondo

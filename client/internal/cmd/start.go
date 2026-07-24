@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"otzer/internal/lifecycle"
+	"otzar/internal/lifecycle"
 )
 
 var startTimeout time.Duration

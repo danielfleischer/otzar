@@ -13,13 +13,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"otzer/internal/lifecycle"
+	"otzar/internal/lifecycle"
 )
 
 // serverError turns a non-2xx response into a Go error. The server sends JSON
 // {"error": "...", "data": {...}} for handled failures (rag.http/with-errors), so
 // we surface that message verbatim — it may be multi-line and carry remediation
-// steps (e.g. the dimension-mismatch guidance to run `otzer admin clear` then
+// steps (e.g. the dimension-mismatch guidance to run `otzar admin clear` then
 // re-index). Anything not in that shape (a proxy error, a raw stack) falls back to
 // the method/status/body so nothing is silently swallowed.
 func serverError(method, path, status string, body []byte) error {
@@ -238,7 +238,7 @@ func (c *Client) IndexStream(req IndexRequest, onEvent func(IndexEvent)) (*Index
 	}
 	stallErr := func() error {
 		return fmt.Errorf("no progress from the server for %s — it stopped indexing when this "+
-			"connection dropped, but files already committed are kept; check `otzer server status`", c.stall)
+			"connection dropped, but files already committed are kept; check `otzar server status`", c.stall)
 	}
 
 	sc := bufio.NewScanner(body)
