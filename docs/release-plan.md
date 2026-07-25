@@ -38,9 +38,22 @@ the source of truth — leave it as-is.
 
 - [x] `CONTRIBUTING.md` (build, test, how the two toolchains fit together).
 - [x] CI workflow — build + test both `server/` (Clojure) and `client/` (Go).
-      `.github/workflows/ci.yml`, two jobs (`server`, `client`), running the
-      same `make check-server`/`make test-server`/`make client`/`make
-      test-client` targets used locally; verified green locally before commit.
+      `.github/workflows/ci.yml`, two jobs (`server`, `client`), running the same
+      `make test-server` (which already depends on `check-server`) and `make
+      client`/`make test-client` targets used locally, on the same toolchain
+      versions: Temurin **26** (matching Homebrew's OpenJDK 26 that `clojure`
+      runs on here), Clojure CLI pinned to 1.12.5.1654, Go pinned to 1.26.5. The
+      client job checks out with `fetch-depth: 0` because `make client` stamps
+      the version from `git describe`. Verified green locally; has not yet run on
+      GitHub — there's no remote.
+- [x] Lint in CI — `make lint` (gofmt check + `go vet` over `client/`), run as its
+      own step in the client job. Kept to what the Go toolchain already ships so
+      the target is reproducible locally with nothing to install; `check-server` is
+      the server-side equivalent. clj-kondo is *not* wired up — it isn't installed
+      locally, and a CI-only linter no one can run before pushing is worse than
+      none. (If it gets added: the `.clj-kondo` line in `.gitignore` currently
+      excludes the whole directory, so a shared `config.edn` would need un-ignoring
+      — only the `.cache/` subdir should be ignored.)
 - [x] README section on shell-completion install (`otzar completion fish | source`).
 - [x] `otzar --version`. Cobra's built-in version flag, stamped at build time from
       `git describe --tags --always --dirty` via the same `-ldflags` the Makefile

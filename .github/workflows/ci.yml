@@ -1,5 +1,10 @@
 name: CI
 
+# Mirrors the local dev loop: the same `make` targets, on the same toolchain
+# versions used on the author's machine (Homebrew's `clojure` + OpenJDK 26,
+# Go 1.26.5). Nothing here needs Ollama — the tests that touch embeddings stub
+# it out.
+
 on:
   push:
     branches: [main]
@@ -14,10 +19,10 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "26"
       - uses: DeLaGuardo/setup-clojure@13.4
         with:
-          cli: latest
+          cli: 1.12.5.1654
       - name: Cache deps
         uses: actions/cache@v4
         with:
@@ -26,9 +31,9 @@ jobs:
             ~/.gitlibs
           key: ${{ runner.os }}-clojure-${{ hashFiles('server/deps.edn') }}
           restore-keys: ${{ runner.os }}-clojure-
-      - name: Compile-check namespaces
-        run: make check-server
-      - name: Run tests
+      # test-server depends on check-server, so this compiles every rag.*
+      # namespace before running the suite — one `make test-server`, as locally.
+      - name: Compile-check and test
         run: make test-server
 
   client:
@@ -36,10 +41,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # `make client` stamps the version from `git describe`, which needs
+          # tags and history — a shallow clone would report a bare SHA.
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26"
+          go-version: "1.26.5"
           cache-dependency-path: client/go.sum
+      - name: Lint
+        run: make lint
       - name: Build
         run: make client
       - name: Run tests

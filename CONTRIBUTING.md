@@ -24,17 +24,23 @@ make build          # compile the client -> bin/otzar
 make server-deps    # one-time: pre-fetch the server's JVM deps
 ```
 
-## Test
+## Test & lint
 
 ```sh
 make test           # test-client + test-server
 make test-client     # go test ./... in client/
 make test-server     # check-server (compile every server namespace) + clojure -M:test
+make lint            # gofmt -l + go vet over client/
 ```
 
 `check-server` compiles every `rag.*` namespace without booting the server —
 run it (or `make test-server`) after any server change, even if you're not
 touching tests, since it's the fastest way to catch a broken require or typo.
+
+`lint` deliberately uses only what the Go toolchain already ships: it fails if
+anything under `client/` isn't gofmt-clean, then runs `go vet`. There's no extra
+linter to install, and CI runs this same target — the server side's equivalent is
+`check-server`.
 
 ## Style & scope
 
@@ -47,6 +53,6 @@ touching tests, since it's the fastest way to catch a broken require or typo.
 
 ## Before opening a PR
 
-1. `make test` passes.
+1. `make test` and `make lint` pass.
 2. `docs/api.md` still matches the routes you touched (if any).
 3. New functionality that's user-facing gets a README mention.

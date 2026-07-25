@@ -1,4 +1,4 @@
-.PHONY: build client install check-server server-deps run stop status test test-client test-server clean clear-index
+.PHONY: build client install check-server server-deps run stop status lint test test-client test-server clean clear-index
 
 INSTALL_DIR ?= $(HOME)/.local/bin
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
@@ -28,6 +28,13 @@ stop: ## Stop the server
 
 status: ## Show server status
 	./bin/otzar server status
+
+lint: ## Check Go formatting (gofmt) and run go vet
+	@out=$$(gofmt -l client); \
+	if [ -n "$$out" ]; then \
+		echo "not gofmt-clean (run 'gofmt -w' on these):"; echo "$$out"; exit 1; \
+	fi
+	go vet -C client ./...
 
 test: test-client test-server ## Run all tests
 
