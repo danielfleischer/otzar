@@ -49,6 +49,20 @@ and boots the JVM on demand.
 Most commands start the server automatically if it isn't running, so an explicit
 `server start` is rarely needed.
 
+### Auto-reindex
+
+```sh
+./bin/otzar server watch status              # armed? and how the last sweep went
+./bin/otzar server watch enable --interval 30m
+./bin/otzar server watch disable
+```
+
+Off by default. Once armed, the server re-scans the trees you've indexed on an
+interval and reconciles new, changed, and deleted files, so you don't have to run
+`index` again by hand. Scanning an unchanged tree is cheap — a stat per file, no
+embedding, so the model never loads — and the setting persists across restarts.
+The first sweep runs one interval after you enable it, never immediately.
+
 ### Index
 
 ```sh

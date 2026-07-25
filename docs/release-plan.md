@@ -42,6 +42,11 @@ the source of truth — leave it as-is.
       same `make check-server`/`make test-server`/`make client`/`make
       test-client` targets used locally; verified green locally before commit.
 - [x] README section on shell-completion install (`otzar completion fish | source`).
+- [x] `otzar --version`. Cobra's built-in version flag, stamped at build time from
+      `git describe --tags --always --dirty` via the same `-ldflags` the Makefile
+      already uses for `serverDir`; a plain `go build` reports `dev`. Bug reports
+      from strangers are unreadable without it, and it can't be retrofitted onto
+      binaries already in the wild.
 - [x] Decide on the name. Renamed `myrag` → **`otzar`** (אוֹצָר, Hebrew for
       *treasure*/*thesaurus*). Picked over *otzer* (אוֹצֵר, curator), which is
       ambiguous — depending on the vowels it also reads as *curfew* (עוֹצֵר);
@@ -89,7 +94,11 @@ Not release blockers, but worth tracking as the public roadmap:
 - [ ] Tags — schema reserves a `tags` field but nothing populates or filters on it.
 - [ ] In-process embeddings (DJL/ONNX). Plan advertises Ollama as swappable; only
       the Ollama impl exists, so Ollama is currently a hard runtime dependency.
-- [ ] File watching / incremental auto-index (deferred by design; state it).
+- [x] File watching / incremental auto-index. Shipped as `otzar server watch`: an
+      interval sweep inside the server that re-scans the roots in `roots.edn` and
+      reconciles new, changed, and deleted files, single-flighted against manual
+      `/index` and persisted in `watch.edn`. Real-time OS watching (inotify/fswatch)
+      stays deferred by design — documented as such in the plan's non-goals.
 
 ## Confirmed clean (no action)
 

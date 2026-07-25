@@ -22,7 +22,9 @@ evolves, but it captures the shape we agreed on and the tradeoffs behind each ch
 **Non-goals (for v1)**
 - Distributed deployment, replication, sharding.
 - Web UI / admin dashboard.
-- Real-time file-system watching (manual reindex is fine).
+- Real-time file-system watching (manual reindex is fine). Resolved: still no
+  inotify/fswatch, but `otzar server watch` shipped — an interval sweep inside the
+  server that re-scans the indexed roots, so reindexing isn't manual either.
 - Reranking / cross-encoders / query rewriting (can be added later).
 - Multi-modal (images, audio).
 
@@ -416,7 +418,8 @@ A rough sequence — each milestone is independently runnable and demoable.
 - Query expansion / HyDE.
 - Per-tenant or per-collection access control.
 - Distributed indexing.
-- Real-time file watching (inotify/fswatch).
+- Real-time file watching (inotify/fswatch) — the interval sweep (`otzar server
+  watch`) covers the need without an OS-specific watcher.
 - Embedding cache for unchanged chunks across model upgrades.
 
 ## 13. MCP server (`otzar mcp`)

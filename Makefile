@@ -1,11 +1,12 @@
 .PHONY: build client install check-server server-deps run stop status test test-client test-server clean clear-index
 
 INSTALL_DIR ?= $(HOME)/.local/bin
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 build: client ## Build the Go client into bin/otzar
 
 client: ## Compile the Go CLI
-	go build -C client -ldflags "-X 'otzar/internal/lifecycle.serverDir=$(CURDIR)/server'" -o ../bin/otzar .
+	go build -C client -ldflags "-X 'otzar/internal/lifecycle.serverDir=$(CURDIR)/server' -X 'otzar/internal/cmd.version=$(VERSION)'" -o ../bin/otzar .
 
 install: build ## Install the client binary to ~/.local/bin (override with INSTALL_DIR=)
 	@mkdir -p $(INSTALL_DIR)

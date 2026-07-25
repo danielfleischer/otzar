@@ -10,6 +10,7 @@ server/.nrepl-port
 client/otzar
 
 # Editor / tooling caches
+.claude/settings.local.json
 .clj-kondo
 .lsp/
 .DS_Store
