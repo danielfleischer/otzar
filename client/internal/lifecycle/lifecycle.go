@@ -301,7 +301,7 @@ func Start(timeout time.Duration) error {
 
 	// Serialize startup across processes. Without this, several cold `otzar mcp`
 	// launches — an LLM host opening multiple sessions, or the MCP Inspector
-	// reconnecting — each see "not healthy" during the ~10-40s JVM boot and spawn
+	// reconnecting — each see "not healthy" during the ~1-2s JVM boot and spawn
 	// their own server; the duplicates then collide on Lucene's single-writer
 	// index lock. Holding this lock across the whole boot makes them queue.
 	unlock, err := acquireStartLock(timeout)

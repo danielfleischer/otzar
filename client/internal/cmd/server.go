@@ -6,12 +6,12 @@ import "github.com/spf13/cobra"
 // invoking it bare prints the subcommand help.
 var serverCmd = &cobra.Command{
 	Use:   "server",
-	Short: "Manage the server process (start, stop, status, watch)",
+	Short: "Manage the server process (start, stop, restart, status, watch)",
 	Long: `Control the local Clojure/Lucene server process that holds the index and
 answers queries. Start it before indexing or searching; stop it to reclaim the
 JVM. 'server watch' toggles the background auto-reindex sweep.`,
 }
 
 func init() {
-	serverCmd.AddCommand(startCmd, stopCmd, statusCmd, watchCmd)
+	serverCmd.AddCommand(startCmd, stopCmd, restartCmd, statusCmd, watchCmd)
 }

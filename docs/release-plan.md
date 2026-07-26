@@ -77,8 +77,11 @@ the source of truth — leave it as-is.
       package everything (Clojure, Lucene, PDFBox, Jetty) into a 25 MB
       `otzar-server.jar` with `rag.main` as Main-Class. A release no longer needs
       the Clojure CLI *or* a checkout at runtime — only a JDK 21+. Side benefit:
-      the AOT'd jar boots in **~0.9 s** vs. the 10–40 s `clojure -M:run` takes to
-      resolve deps and load namespaces.
+      the AOT'd jar boots in **~0.65 s** against **~1.4 s** for `clojure -M:run`
+      (measured on macOS/arm64, warm caches, isolated `user.home`). Note the
+      `~10-40s JVM boot` that the start-lock comment used to cite was wrong —
+      presumably a cold first run that also downloaded deps. Both paths are
+      sub-two-second; the jar's win is real but small.
 - [x] **Client resolves the server instead of assuming a checkout.**
       `lifecycle.resolveServer` returns a launch spec — packaged jar or source
       tree — searching `$OTZAR_SERVER_JAR`, a checkout (`$OTZAR_SERVER_DIR`,
@@ -144,6 +147,21 @@ Not release blockers, but worth tracking as the public roadmap:
       citation span (hits render as a bare path) until `otzar index --force`.
       Still open: HTML is indexed as raw markup, tags and all, and docx isn't
       claimed at all.
+- [ ] Auto-start the server on index-touching verbs. Today only `otzar mcp`
+      boots the server; `index`, `query`, `list`, and `admin *` all fail with
+      "server not running (no port file)" — while the README claims most commands
+      start it automatically. Decided rule: **verbs that talk to the index
+      auto-start; verbs that talk to the server process don't.** So `index`,
+      `query`, `list`, `admin *` start it; everything under `server` stays
+      explicit, since `server status` reporting "not running" is its whole job.
+      `server watch status` is the awkward edge — it needs the server to read the
+      persisted toggle — and takes the small inconsistency over a status command
+      with side effects. Shape: one `client()` helper in `cmd` calling
+      `lifecycle.Start`, tolerating `ErrAlreadyRunning`, then `api.New()`,
+      replacing the bare `api.New()` in ~7 commands, plus a "starting server…"
+      notice on stderr (keeps `otzar list | wc -l` clean). The start lock already
+      makes concurrent cold invocations safe. No `--no-start` escape hatch until
+      something needs one. Until this lands, fix the README's claim instead.
 - [ ] Windows support. The server half is already portable (the jar runs anywhere
       with a JDK; Ollama ships a Windows build) except for
       `Files/setPosixFilePermissions` in `rag.config`, which throws on NTFS — a

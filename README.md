@@ -85,12 +85,18 @@ From a checkout these are `./bin/otzar`; installed, just `otzar`.
 
 ```sh
 otzar server start    # boot the server (background JVM)
-otzar server status   # health + index stats
+otzar server status   # health + index stats, and which server it resolved
+otzar server restart  # stop (if running) then start — picks up server changes
 otzar server stop     # graceful shutdown
 ```
 
-Most commands start the server automatically if it isn't running, so an explicit
-`server start` is rarely needed.
+The server has to be running for `index`, `query`, `list`, and `admin *`; only
+`otzar mcp` starts it on its own. Booting takes a second or two — ~0.65s from the
+packaged jar, ~1.4s from a source checkout.
+
+`server restart` is the development loop: from a checkout it picks up the Clojure
+you just edited, and from an installed jar it picks up whatever `make uber` last
+packaged.
 
 ### Auto-reindex
 
