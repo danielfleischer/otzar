@@ -72,14 +72,18 @@
 (defn status
   "-> map
   Current watch state for GET /watch: whether the sweep is armed, its interval,
-  whether an index run is in progress right now, and the last sweep's time+summary."
+  the seconds until the next sweep (only while armed), whether an index run is in
+  progress right now, and the last sweep's time+summary."
   []
-  (let [{:keys [enabled interval-s last]} @state]
+  (let [{:keys [enabled interval-s last ^ScheduledFuture future]} @state]
     (cond-> {:enabled    (boolean enabled)
              :interval_s interval-s
              :indexing   (index/indexing?)}
-      last (assoc :last_sweep_at (:at last)
-                  :last_result   (:result last)))))
+      ;; The scheduler itself is the source of truth for "when next" — a sweep that
+      ;; is due or running reports 0 rather than a negative delay.
+      future (assoc :next_sweep_in_s (max 0 (.getDelay future TimeUnit/SECONDS)))
+      last   (assoc :last_sweep_at (:at last)
+                    :last_result   (:result last)))))
 
 (defn enable!
   "interval-s:long? -> status

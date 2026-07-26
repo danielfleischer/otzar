@@ -190,7 +190,7 @@ persists to `watch.edn` so it survives a restart.
 `GET /watch` reports the current state:
 
 ```json
-{"enabled": true, "interval_s": 1800, "indexing": false,
+{"enabled": true, "interval_s": 1800, "next_sweep_in_s": 742, "indexing": false,
  "last_sweep_at": 1712345678000,
  "last_result": {"roots": 2, "present": 2, "pruned": [],
                  "indexed": 1, "chunks": 4, "unchanged": 37,
@@ -199,6 +199,8 @@ persists to `watch.edn` so it survives a restart.
 
 - `interval_s` — seconds between sweeps (default 1800; `OTZAR_WATCH_INTERVAL` or a
   per-user value set via `POST`).
+- `next_sweep_in_s` — seconds until the next scheduled sweep, straight from the
+  scheduler. Absent when watch is off; `0` when a sweep is due or running.
 - `indexing` — whether an index run (manual or a sweep) holds the single-flight lock
   right now.
 - `last_sweep_at` / `last_result` — the most recent sweep's time and summary, absent

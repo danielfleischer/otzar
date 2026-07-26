@@ -101,7 +101,7 @@ packaged.
 ### Auto-reindex
 
 ```sh
-otzar server watch status              # armed? and how the last sweep went
+otzar server watch status              # armed? next sweep when? last sweep how?
 otzar server watch enable --interval 30m
 otzar server watch disable
 ```

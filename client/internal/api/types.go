@@ -157,14 +157,16 @@ type WatchRequest struct {
 }
 
 // WatchStatus is the body of GET /watch and the response to POST /watch: whether
-// the background auto-reindex sweep is armed, its interval in seconds, whether an
-// index run is happening right now, and a summary of the last sweep (if any).
+// the background auto-reindex sweep is armed, its interval in seconds, how long
+// until the next sweep, whether an index run is happening right now, and a summary
+// of the last sweep (if any). NextSweepInS is only sent while the sweep is armed.
 type WatchStatus struct {
-	Enabled     bool         `json:"enabled"`
-	IntervalS   int          `json:"interval_s"`
-	Indexing    bool         `json:"indexing"`
-	LastSweepAt int64        `json:"last_sweep_at,omitempty"` // epoch millis
-	LastResult  *SweepResult `json:"last_result,omitempty"`
+	Enabled      bool         `json:"enabled"`
+	IntervalS    int          `json:"interval_s"`
+	NextSweepInS int          `json:"next_sweep_in_s,omitempty"`
+	Indexing     bool         `json:"indexing"`
+	LastSweepAt  int64        `json:"last_sweep_at,omitempty"` // epoch millis
+	LastResult   *SweepResult `json:"last_result,omitempty"`
 }
 
 // SweepResult summarises one background sweep (WatchStatus.LastResult). Skipped is

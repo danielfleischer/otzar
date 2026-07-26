@@ -37,6 +37,13 @@ func printWatch(w *api.WatchStatus) {
 		{"watch", state},
 		{"interval", (time.Duration(w.IntervalS) * time.Second).String()},
 	}
+	if w.Enabled {
+		next := "due now"
+		if d := time.Duration(w.NextSweepInS) * time.Second; d > 0 {
+			next = "in " + d.String()
+		}
+		kv = append(kv, [2]string{"next sweep", next})
+	}
 	if w.Indexing {
 		kv = append(kv, [2]string{"indexing", "yes (a run is in progress)"})
 	}
