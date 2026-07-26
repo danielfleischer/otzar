@@ -1,39 +1,171 @@
 package lifecycle
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
 
-// TestResolveServerDirBaked verifies the build-time-baked serverDir is used as a
-// fallback: with OTZAR_SERVER_DIR unset and no ./server in the working dir, the
-// baked path (validated by its deps.edn) is returned.
-func TestResolveServerDirBaked(t *testing.T) {
-	t.Setenv("OTZAR_SERVER_DIR", "")
+// isolate points every lookup resolveServer does at scratch directories: a
+// scratch cwd (so the ./server/deps.edn probe misses), a scratch HOME and
+// XDG_DATA_HOME (so an installed jar on the developer's machine can't leak in),
+// no baked serverDir, and no environment overrides.
+func isolate(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{"OTZAR_SERVER_DIR", "OTZAR_SERVER_JAR", "OTZAR_JAVA", "JAVA_HOME"} {
+		t.Setenv(k, "")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "xdg"))
 
-	// Run from a scratch cwd so the ./server/deps.edn check misses.
 	cwd, _ := os.Getwd()
 	t.Cleanup(func() { _ = os.Chdir(cwd) })
 	if err := os.Chdir(t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
 
+	old := serverDir
+	serverDir = ""
+	t.Cleanup(func() { serverDir = old })
+}
+
+// fakeJava writes an executable stub that exits with the given code, standing in
+// for a JVM. `exit 0` is a working java; anything else is a broken one, like the
+// /usr/bin/java shim macOS ships when no JDK is installed.
+func fakeJava(t *testing.T, dir string, exitCode int) string {
+	t.Helper()
+	path := filepath.Join(dir, "java")
+	script := fmt.Sprintf("#!/bin/sh\nexit %d\n", exitCode)
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestResolveServerBakedSourceDir verifies the build-time-baked serverDir is
+// used when there's no override and no ./server in the working dir: a checkout
+// build keeps running the source tree it was built from.
+func TestResolveServerBakedSourceDir(t *testing.T) {
+	isolate(t)
+
 	baked := t.TempDir()
 	if err := os.WriteFile(filepath.Join(baked, "deps.edn"), []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	old := serverDir
 	serverDir = baked
-	t.Cleanup(func() { serverDir = old })
 
-	got, err := resolveServerDir()
+	got, err := resolveServer()
 	if err != nil {
-		t.Fatalf("resolveServerDir: %v", err)
+		t.Fatalf("resolveServer: %v", err)
 	}
-	if got != baked {
-		t.Fatalf("got %q, want baked path %q", got, baked)
+	if got.cmd != "clojure" || got.dir != baked {
+		t.Fatalf("got %s %v in %q, want clojure -M:run in %q", got.cmd, got.args, got.dir, baked)
+	}
+}
+
+// TestResolveServerInstalledJar covers the shipped install: no checkout
+// anywhere, just a jar in the user's data dir, booted by a located JVM with the
+// memory options that deps.edn's :run alias applies in development.
+func TestResolveServerInstalledJar(t *testing.T) {
+	isolate(t)
+
+	dataDir := filepath.Join(os.Getenv("XDG_DATA_HOME"), "otzar")
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	jar := filepath.Join(dataDir, jarName)
+	if err := os.WriteFile(jar, []byte("not really a jar"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	java := fakeJava(t, t.TempDir(), 0)
+	t.Setenv("OTZAR_JAVA", java)
+
+	got, err := resolveServer()
+	if err != nil {
+		t.Fatalf("resolveServer: %v", err)
+	}
+	if got.cmd != java {
+		t.Fatalf("cmd = %q, want the located java %q", got.cmd, java)
+	}
+	if len(got.args) < 2 || got.args[len(got.args)-2] != "-jar" || got.args[len(got.args)-1] != jar {
+		t.Fatalf("args = %v, want them to end in -jar %s", got.args, jar)
+	}
+	for _, want := range jvmOpts {
+		if !slices.Contains(got.args, want) {
+			t.Fatalf("args = %v, missing JVM option %s", got.args, want)
+		}
+	}
+}
+
+// TestResolveServerJarEnvWins verifies OTZAR_SERVER_JAR overrides a source
+// checkout that would otherwise be preferred, and that pointing it at a missing
+// file is a clear error rather than a silent fallback.
+func TestResolveServerJarEnvWins(t *testing.T) {
+	isolate(t)
+
+	baked := t.TempDir()
+	if err := os.WriteFile(filepath.Join(baked, "deps.edn"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	serverDir = baked
+
+	jar := filepath.Join(t.TempDir(), jarName)
+	if err := os.WriteFile(jar, []byte("not really a jar"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OTZAR_SERVER_JAR", jar)
+	t.Setenv("OTZAR_JAVA", fakeJava(t, t.TempDir(), 0))
+
+	got, err := resolveServer()
+	if err != nil {
+		t.Fatalf("resolveServer: %v", err)
+	}
+	if !slices.Contains(got.args, jar) {
+		t.Fatalf("args = %v, want the jar from OTZAR_SERVER_JAR (%s)", got.args, jar)
+	}
+
+	t.Setenv("OTZAR_SERVER_JAR", filepath.Join(t.TempDir(), "absent.jar"))
+	if _, err := resolveServer(); err == nil {
+		t.Fatal("a missing OTZAR_SERVER_JAR should be an error, not a fallback")
+	}
+}
+
+// TestResolveServerNothingInstalled verifies the failure is an explanatory error
+// rather than a spawn of some arbitrary `clojure` on PATH.
+func TestResolveServerNothingInstalled(t *testing.T) {
+	isolate(t)
+
+	if _, err := resolveServer(); err == nil {
+		t.Fatal("want an error when neither a jar nor a checkout exists")
+	}
+}
+
+// TestResolveJavaSkipsBrokenCandidate is the macOS case that makes probing
+// necessary: a java that exists and is executable but fails when run must be
+// passed over for one that works, not returned.
+func TestResolveJavaSkipsBrokenCandidate(t *testing.T) {
+	isolate(t)
+
+	t.Setenv("OTZAR_JAVA", fakeJava(t, t.TempDir(), 1)) // first candidate, but broken
+
+	// The next candidate is JAVA_HOME/bin/java, so stage a working one there.
+	javaHome := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(javaHome, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	good := fakeJava(t, filepath.Join(javaHome, "bin"), 0)
+	t.Setenv("JAVA_HOME", javaHome)
+
+	got, err := resolveJava()
+	if err != nil {
+		t.Fatalf("resolveJava: %v", err)
+	}
+	if got != good {
+		t.Fatalf("resolveJava = %q, want %q (the broken candidate should be skipped)", got, good)
 	}
 }
 

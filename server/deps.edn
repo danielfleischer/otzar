@@ -33,6 +33,9 @@
   ;; ns without booting the server. rag.main no longer statically requires nREPL,
   ;; so nothing extra is needed to compile it.
   :check {}
+  ;; Packaging: `clojure -T:build uber` -> target/otzar-server.jar (see build.clj).
+  :build {:deps    {io.github.clojure/tools.build {:mvn/version "0.10.14"}}
+          :ns-default build}
   :test {:extra-paths ["test"]
          :extra-deps  {io.github.cognitect-labs/test-runner
                        {:git/sha "3f288f1f16d167723ad87cc35b1dfee3c1681e10"}}

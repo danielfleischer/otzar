@@ -71,6 +71,46 @@ the source of truth — leave it as-is.
       `mv ~/.otzer ~/.otzar` or clear and re-index, and delete the stale
       `~/.local/bin/otzer`.
 
+## 2b. Distribution / install story
+
+- [x] **Ship the server as an uberjar.** `server/build.clj` + the `:build` alias
+      package everything (Clojure, Lucene, PDFBox, Jetty) into a 25 MB
+      `otzar-server.jar` with `rag.main` as Main-Class. A release no longer needs
+      the Clojure CLI *or* a checkout at runtime — only a JDK 21+. Side benefit:
+      the AOT'd jar boots in **~0.9 s** vs. the 10–40 s `clojure -M:run` takes to
+      resolve deps and load namespaces.
+- [x] **Client resolves the server instead of assuming a checkout.**
+      `lifecycle.resolveServer` returns a launch spec — packaged jar or source
+      tree — searching `$OTZAR_SERVER_JAR`, a checkout (`$OTZAR_SERVER_DIR`,
+      `./server`, the baked-in path), then the jar beside the binary,
+      `$XDG_DATA_HOME/otzar`, `~/.local/share/otzar`, `<prefix>/share|lib/otzar`.
+      Checkouts deliberately win over installed jars so development is unaffected.
+      `otzar server status` now reports which one it resolved.
+- [x] **Locate a JVM.** `java -jar` needs a JVM the way `clojure` didn't. macOS
+      ships `/usr/bin/java` as a stub that exists, is executable, and fails when
+      no JDK is registered — and Homebrew's `openjdk` is keg-only — so on a Mac
+      whose only JDK came with `clojure` there is *no* working `java` on PATH.
+      `resolveJava` therefore probes candidates by running them
+      (`$OTZAR_JAVA` → `$JAVA_HOME` → `/usr/libexec/java_home` → Homebrew → PATH)
+      and fails with an actionable message rather than a JVM crash in the log.
+- [x] **Release workflow.** `.github/workflows/release.yml` fires on a `v*` tag:
+      one platform-independent jar plus client tarballs for darwin/linux ×
+      arm64/amd64, `sha256` checksums, published with `gh release create`. All
+      four cross-compiles verified locally. The jar asset is deliberately *not*
+      versioned in its filename so it can be curl'd straight into place.
+- [x] **`make install` vs `make install-dev`.** `install` builds a release-shaped
+      client (no baked checkout path) and drops the binary + jar into
+      `INSTALL_DIR`/`DATA_DIR`, both overridable; `install-dev` keeps the old
+      behaviour of binding the binary to this checkout.
+- [x] Verified end to end on macOS/arm64 (scratch prefix, isolated `user.home`):
+      status → start → index → hybrid query → stop, all from the jar with no
+      checkout in sight, plus five new `lifecycle` tests covering resolution
+      order, the env override, a missing jar, and the broken-`java`-stub case.
+- [ ] Remaining verification, all of it needing a machine we don't have: the
+      Linux assets (cross-compiled but never run), and the "no JDK anywhere" error
+      path (only exercised through its unit test). Both are first-push follow-ups
+      rather than blockers — the failure mode is a clear message, not corruption.
+
 ## 3. Test coverage gaps
 
 - [x] Server: no tests for `http`, `embed`, or top-level `index` — the
@@ -104,6 +144,21 @@ Not release blockers, but worth tracking as the public roadmap:
       citation span (hits render as a bare path) until `otzar index --force`.
       Still open: HTML is indexed as raw markup, tags and all, and docx isn't
       claimed at all.
+- [ ] Windows support. The server half is already portable (the jar runs anywhere
+      with a JDK; Ollama ships a Windows build) except for
+      `Files/setPosixFilePermissions` in `rag.config`, which throws on NTFS — a
+      one-line guard. The client half doesn't compile at all: `GOOS=windows` fails
+      on the four Unix primitives `lifecycle` is built on — `syscall.Kill` for
+      liveness, `Flock` for the start lock, `Setpgid` to detach the server, and
+      `SIGTERM` as the stop fallback. Each has a `golang.org/x/sys/windows`
+      equivalent (`OpenProcess`, `LockFileEx`, `CREATE_NEW_PROCESS_GROUP`,
+      `TerminateProcess`) — already an indirect dep — behind a
+      `lifecycle_unix.go`/`lifecycle_windows.go` build-tag split, call it ~100
+      lines. Then `%LOCALAPPDATA%` in `jarCandidates`, `java.exe` in `resolveJava`,
+      and `.zip` release assets. Deferred not for the code but for the
+      verification: the port would be unrunnable here, and what it guards
+      (concurrent cold `otzar mcp` launches racing to boot one server) only
+      misbehaves in practice. Add a `windows-latest` CI job before attempting it.
 - [ ] Tags — schema reserves a `tags` field but nothing populates or filters on it.
 - [ ] In-process embeddings (DJL/ONNX). Plan advertises Ollama as swappable; only
       the Ollama impl exists, so Ollama is currently a hard runtime dependency.

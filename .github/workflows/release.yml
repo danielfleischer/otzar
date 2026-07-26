@@ -1,0 +1,91 @@
+name: Release
+
+# Publishes the two halves of otzar as separate release assets: one
+# platform-independent server jar, and a client binary per platform. A user
+# downloads one of each and puts them wherever they like — the client finds the
+# jar beside itself, under ~/.local/share/otzar, or at OTZAR_SERVER_JAR.
+#
+# Triggered by pushing a tag: `git tag v0.1.0 && git push origin v0.1.0`.
+# Assumes CI is already green on the commit being tagged.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  server:
+    name: Server jar
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "26"
+      - uses: DeLaGuardo/setup-clojure@13.4
+        with:
+          cli: 1.12.5.1654
+      - name: Build the uberjar
+        run: make uber
+      # Deliberately not versioned in the filename: the client looks for exactly
+      # otzar-server.jar, so this can be curl'd straight into place without a
+      # rename. The release page carries the version.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-jar
+          path: server/target/otzar-server.jar
+          if-no-files-found: error
+
+  clients:
+    name: Client (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - { goos: darwin, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.5"
+          cache-dependency-path: client/go.sum
+      # client-release, not client: no checkout path baked in, so the installed
+      # binary looks for the packaged jar instead of a source tree.
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: make client-release VERSION=${{ github.ref_name }}
+      - name: Package
+        run: tar -czf otzar_${{ github.ref_name }}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz -C bin otzar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: client-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: otzar_*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: [server, clients]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Checksums
+        run: cd assets && sha256sum * > checksums.txt && cat checksums.txt
+      # gh ships on the runner, so there's no third-party action in the path that
+      # publishes artifacts.
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release create "${{ github.ref_name }}" assets/* --generate-notes --verify-tag

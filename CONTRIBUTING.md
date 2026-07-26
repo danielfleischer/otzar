@@ -21,8 +21,23 @@ running separately to develop against them.
 
 ```sh
 make build          # compile the client -> bin/otzar
+make uber           # package the server -> server/target/otzar-server.jar
 make server-deps    # one-time: pre-fetch the server's JVM deps
 ```
+
+Two ways the client finds the server, and it matters for what you're testing:
+
+- **From a checkout** (`make build`, `make install-dev`) the client has this
+  repo's `server/` baked in and runs it via `clojure -M:run`, so edits take
+  effect on the next server restart with no repackaging.
+- **From a release** (`make install`, or the tarball + jar from a GitHub release)
+  it runs `otzar-server.jar` under a JVM it locates itself. Server changes need a
+  `make uber` to show up.
+
+If you touch `lifecycle.jvmOpts`, keep it in sync with the `:run` alias in
+`server/deps.edn` — a jar can't carry `-Xmx`, so those options only reach the
+packaged server through the client. Releases are cut by pushing a `v*` tag; see
+`.github/workflows/release.yml`.
 
 ## Test & lint
 

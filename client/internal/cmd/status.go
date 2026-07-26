@@ -17,11 +17,18 @@ var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show server health and index stats",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Which server would we boot — an installed jar or a checkout? Cheap to
+		// report and the first thing worth knowing when an install misbehaves.
+		source := lifecycle.ServerSource()
+
 		if !lifecycle.IsHealthy() {
 			if statusJSON {
-				return render.JSON(map[string]any{"running": false})
+				return render.JSON(map[string]any{"running": false, "source": source})
 			}
-			fmt.Println("server: not running")
+			render.KV([][2]string{
+				{"server", "not running"},
+				{"source", source},
+			})
 			return nil
 		}
 
@@ -41,6 +48,7 @@ var statusCmd = &cobra.Command{
 		if statusJSON {
 			return render.JSON(map[string]any{
 				"running": true,
+				"source":  source,
 				"health":  health,
 				"stats":   stats,
 			})
@@ -48,6 +56,7 @@ var statusCmd = &cobra.Command{
 
 		render.KV([][2]string{
 			{"server", "running"},
+			{"source", source},
 			{"status", health.Status},
 			{"uptime", time.Duration(health.UptimeS * float64(time.Second)).Round(time.Second).String()},
 			{"docs", fmt.Sprintf("%d", stats.NumDocs)},
