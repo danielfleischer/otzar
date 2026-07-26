@@ -122,6 +122,18 @@ Indexable file types: plain text, markdown, and source code (read as-is), and
 so a scanned PDF with no text layer is skipped). Anything else is ignored. Formats
 live in one registry, `server/src/rag/index/extractor.clj`, if you want to add one.
 
+### List what's indexed
+
+```sh
+otzar list          # one absolute path per line
+otzar ls | wc -l    # bare paths, so it pipes
+otzar list -j       # {count, paths}
+```
+
+The index's own record, which is not the same as `roots.edn`: roots are the trees
+you asked for (what the watch sweep re-scans), while this is what actually made
+it in.
+
 ### Query
 
 ```sh

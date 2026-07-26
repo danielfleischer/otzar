@@ -10,7 +10,7 @@ Status legend: ✅ implemented · ⬜ planned (milestone in parens).
 |--------|-----------------|--------|----------------------------------------------------------------------------------------------------------------------------------------|
 | GET    | `/health`       | ✅     | `{status, uptime_s}`                                                                                                                   |
 | GET    | `/stats`        | ✅     | `{num_docs, num_chunks}`                                                                                                               |
-| GET    | `/paths`        | ✅     | `{count, paths}` — distinct indexed source files (MCP `list_indexed_paths`)                                                            |
+| GET    | `/paths`        | ✅     | `{count, paths}` — distinct indexed source files (`otzar list`, MCP `list_indexed_paths`)                                              |
 | POST   | `/shutdown`     | ✅     | `{ok: true}`, then the process exits                                                                                                   |
 | POST   | `/index`        | ✅     | `{paths, recursive}` → `{indexed, ...}`; incremental — re-run to skip unchanged files and replace changed ones                         |
 | POST   | `/query`        | ✅     | `{q, k, mode, filters, fusion}` → `{hits}`; `mode` hybrid (default)/keyword/vector                                                     |
