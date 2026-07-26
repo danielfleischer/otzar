@@ -175,6 +175,37 @@ otzar mcp             # speak MCP over stdio (launched by an LLM host)
 to an LLM host (Claude Desktop/Code) over stdin/stdout. It starts the backing
 server automatically and leaves it running when the host disconnects.
 
+To register it with Claude Code:
+
+```sh
+claude mcp add notes -s user -- otzar mcp    # use an absolute path if otzar isn't on the host's PATH
+```
+
+**Name it after what you indexed, not after otzar.** The name you pass becomes
+the tool prefix the model sees — `notes` gives it `mcp__notes__search`, which
+reads like something to reach for when you ask about your notes. `otzar` gives it
+`mcp__otzar__search`, a word that means nothing to a model and that you then have
+to invoke by name. Pick `notes`, `papers`, `research`, `wiki`, `journal` —
+whatever your corpus actually is. It is a local label; nothing in otzar depends
+on it, and you can change it any time with `claude mcp remove <name>` followed by
+another `add`.
+
+For the same reason, tell your host what lives in the index. The tool
+descriptions describe the *shape* of the corpus (notes, papers, saved reading)
+because they ship to everyone; only you know it holds, say, ten years of
+org-mode journals. A couple of lines in `CLAUDE.md` (or your host's equivalent)
+close that gap:
+
+```markdown
+My notes and reading live in an otzar index (~/Documents/Notes, org + markdown).
+When I ask what I wrote, read, or think about something, search it before
+answering rather than guessing.
+```
+
+Drop `-s user` to scope the server to the current project instead, or use
+`-s project` to write a `.mcp.json` that ships with the repo. `claude mcp list`
+shows what is registered and whether it connects.
+
 ### Shell completion
 
 Cobra generates completion scripts for bash, zsh, fish, and PowerShell. For fish:

@@ -58,14 +58,21 @@ type noInput struct{}
 func addSearch(s *mcpsdk.Server, c *api.Client) {
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name: "search",
-		Description: "Hybrid keyword+vector search over the user's local document index " +
-			"(text, code, markdown, PDF). Returns ranked text chunks, each with its source " +
-			"file path, the 1-based range the chunk spans (loc_start/loc_end) together with " +
-			"the unit that range is in (locator: \"line\" or \"page\"), and an id you can pass " +
-			"to get_document to read the full file. Cite a line range as path:42-47 and a " +
-			"page range as path p.4 — never the other way round, and never invent a range " +
-			"when the fields are absent. Use this to find where something is discussed " +
-			"before answering questions about the user's documents or code.",
+		Description: "Search the user's own notes, journals, papers, and saved reading — " +
+			"their personal knowledge base, indexed from directories they chose. Use this " +
+			"whenever the question is about what the user has written, read, or thought " +
+			"about: \"my notes on X\", \"did I write about ...\", \"what do I think about " +
+			"...\", \"that paper/book about ...\", their journal, past projects, or past " +
+			"jobs. The index lives outside the current working directory, so it is the " +
+			"only way to reach these files — Grep and Read cannot see them. Call " +
+			"list_indexed_paths if you need to know whether a topic area is covered. " +
+			"Hybrid keyword+vector retrieval over text, code, markdown, and PDF. Returns " +
+			"ranked text chunks, each with its source file path, the 1-based range the " +
+			"chunk spans (loc_start/loc_end) together with the unit that range is in " +
+			"(locator: \"line\" or \"page\"), and an id you can pass to get_document to " +
+			"read the full file. Cite a line range as path:42-47 and a page range as " +
+			"path p.4 — never the other way round, and never invent a range when the " +
+			"fields are absent.",
 	}, func(_ context.Context, _ *mcpsdk.CallToolRequest, in SearchInput) (*mcpsdk.CallToolResult, SearchOutput, error) {
 		req := api.QueryRequest{Q: in.Q, K: in.K, Mode: in.Mode}
 		filters := map[string]any{}
@@ -100,10 +107,14 @@ func addSearch(s *mcpsdk.Server, c *api.Client) {
 func addGetDocument(s *mcpsdk.Server, c *api.Client) {
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name: "get_document",
-		Description: "Fetch the full text of an indexed item by id. Pass a doc_id to get the " +
-			"whole source file (read fresh from disk, with original formatting), or a chunk id " +
-			"(<doc_id>:<n>, as returned by search) to get just that chunk. A \"stale\": true " +
-			"field on the result means the file changed on disk after it was indexed.",
+		Description: "Read a full note, paper, or journal file from the user's personal " +
+			"knowledge base — the Read tool cannot reach these files, so use this instead. " +
+			"Follow up a search hit with this when the chunk is not enough context, or when " +
+			"the user asks to see, summarize, or edit a whole document you found. Pass a " +
+			"doc_id to get the whole source file (read fresh from disk, with original " +
+			"formatting), or a chunk id (<doc_id>:<n>, as returned by search) to get just " +
+			"that chunk. A \"stale\": true field on the result means the file changed on " +
+			"disk after it was indexed.",
 	}, func(_ context.Context, _ *mcpsdk.CallToolRequest, in GetDocumentInput) (*mcpsdk.CallToolResult, api.Document, error) {
 		doc, err := c.Document(in.ID)
 		if err != nil {
@@ -116,9 +127,12 @@ func addGetDocument(s *mcpsdk.Server, c *api.Client) {
 func addListIndexedPaths(s *mcpsdk.Server, c *api.Client) {
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name: "list_indexed_paths",
-		Description: "List the absolute paths of every source file currently in the index. " +
-			"Use this to tell the user (or yourself) whether a given file or topic area is " +
-			"actually available to search, instead of guessing.",
+		Description: "List the absolute paths of every file in the user's personal knowledge " +
+			"base — the directories they have indexed and the notes, papers, and journals " +
+			"inside them. Use this to see what the search tool covers before deciding whether " +
+			"to reach for it, to answer \"do I have anything about ...\" or \"what have you " +
+			"got indexed\", or to resolve a file the user names loosely (\"my meeting notes\") " +
+			"to a real path. Cheap: paths only, no file contents.",
 	}, func(_ context.Context, _ *mcpsdk.CallToolRequest, _ noInput) (*mcpsdk.CallToolResult, api.PathsResult, error) {
 		res, err := c.Paths()
 		if err != nil {
