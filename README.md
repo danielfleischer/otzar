@@ -23,6 +23,9 @@ Ollama-backed embeddings, metadata filters, live indexing progress, an MCP
 adapter, and index maintenance (`stats`, `prune`, `clear`, `reindex`). Indexes
 text, markdown, code, and PDF. Local-only, single-user, no auth — by design.
 
+Personal project, best-effort maintenance: issues and ideas welcome, pull
+requests probably not.
+
 ## Install
 
 otzar is two files: the `otzar` client binary and `otzar-server.jar`, the whole
