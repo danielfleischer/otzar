@@ -144,35 +144,65 @@ Not release blockers, but worth tracking as the public roadmap:
       is now detected up front and fails fast with the exact clear+reindex commands
       — `rag.index/ensure-dim!`, gating `/index` and vector/hybrid `/query` — rather
       than throwing a raw Lucene error. Auto-reindex on bump is still future.)
-- [ ] HTML/docx extraction (plan M8). **PDF is done** — `rag.index.extract.pdf`
-      via PDFBox (4 jars, no Tika), registered like any other format. Page text is
-      unwrapped back into prose (soft line breaks folded, words de-hyphenated
-      across the break, list items kept apart), and pages are separated by a form
-      feed so the chunk's span is a *page* range.
+- [x] HTML and docx extraction (plan M8), both as registry entries with no new
+      dependency. **HTML** (`rag.index.extract.html`) was previously claimed by the
+      plain-text format and indexed as raw markup — every `<div class="…">` was
+      text to embed and match. It now strips tags, comments and script/style
+      bodies with a small quote-aware scanner, and decodes the character
+      references that occur in prose. The design constraint is that it *keeps the
+      file's line structure exactly* — newlines inside a dropped tag are preserved,
+      and none are ever inserted — which is what lets HTML keep the `line` locator
+      honestly, so `article.html:42` is a line you can go look at. A minified page
+      is therefore one enormous line: a true citation, if not a useful one.
+      **docx** (`rag.index.extract.docx`) streams `word/document.xml` out of the
+      zip with `java.util.zip` + StAX (DTDs off), concatenating `<w:t>` runs per
+      `<w:p>`. It introduces the third locator, **`paragraph`** (U+2029 separator,
+      rendered `notes.docx ¶12`): a .docx has no lines or pages in the file at all
+      — both are decided at display time — and the paragraph sequence is the only
+      citable unit it really has. Empty paragraphs are kept as empty units so the
+      numbering matches what you'd count in Word. The old binary `.doc` and
+      encrypted files are silent skips (neither is a zip). Verified end to end
+      against a real index; 21 new tests, including line-fidelity properties for
+      HTML and an XXE case for docx.
+      Note for an existing index: HTML indexed before this is still sitting there
+      as markup chunks. The bytes and the model are both unchanged, so the
+      incremental gate cannot see that the *extractor* changed — the blind spot
+      `rag.index/file->chunks` documents — and only `otzar index --force <path>`
+      re-extracts them.
+- [ ] Remaining extraction gaps after HTML/docx: HTML is decoded as UTF-8 whatever
+      its `<meta charset>` says, so a windows-1255 or latin-1 page lands as junk
+      text rather than an error, and `.doc`, `.rtf`, `.epub`, and `.pptx` are all
+      still unclaimed. None has tripped a real file yet.
+- [x] PDF extraction (plan M8) — `rag.index.extract.pdf` via PDFBox (4 jars, no
+      Tika), registered like any other format. Page text is unwrapped back into
+      prose (soft line breaks folded, words de-hyphenated across the break, list
+      items kept apart), and pages are separated by a form feed so the chunk's span
+      is a *page* range.
       The chunk's `line_start/line_end` became a tagged locator along the way:
-      chunks now carry `locator` (`line` | `page`) plus `loc_start`/`loc_end`, the
-      extractor registry declares the unit per format, and the client renders
-      `notes.md:42-47` or `paper.pdf p.4`. Adding docx paragraphs is one registry
-      entry plus one `segmenter/unit-separator` entry.
+      chunks now carry `locator` plus `loc_start`/`loc_end`, the extractor registry
+      declares the unit per format, and the client renders `notes.md:42-47` or
+      `paper.pdf p.4`. That vocabulary is what docx later extended, exactly as
+      predicted here — one registry entry plus one `segmenter/unit-separator`
+      entry.
       Note: this renames wire fields, so chunks indexed before it lose their
       citation span (hits render as a bare path) until `otzar index --force`.
-      Still open: HTML is indexed as raw markup, tags and all, and docx isn't
-      claimed at all.
-- [ ] Auto-start the server on index-touching verbs. Today only `otzar mcp`
-      boots the server; `index`, `query`, `list`, and `admin *` all fail with
-      "server not running (no port file)" — while the README claims most commands
-      start it automatically. Decided rule: **verbs that talk to the index
-      auto-start; verbs that talk to the server process don't.** So `index`,
-      `query`, `list`, `admin *` start it; everything under `server` stays
-      explicit, since `server status` reporting "not running" is its whole job.
-      `server watch status` is the awkward edge — it needs the server to read the
-      persisted toggle — and takes the small inconsistency over a status command
-      with side effects. Shape: one `client()` helper in `cmd` calling
-      `lifecycle.Start`, tolerating `ErrAlreadyRunning`, then `api.New()`,
-      replacing the bare `api.New()` in ~7 commands, plus a "starting server…"
-      notice on stderr (keeps `otzar list | wc -l` clean). The start lock already
-      makes concurrent cold invocations safe. No `--no-start` escape hatch until
-      something needs one. Until this lands, fix the README's claim instead.
+- [x] Auto-start the server on index-touching verbs. Rule as decided: **verbs that
+      talk to the index auto-start; verbs that talk to the server process don't.**
+      Shipped as `client()` in `internal/cmd/client.go` — `lifecycle.Start` (60s,
+      matching `server start`), tolerating `ErrAlreadyRunning`, then `api.New()` —
+      replacing the bare `api.New()` in the seven index-touching commands (`index`,
+      `query`, `list`, `admin stats|prune|clear|reindex`). Everything under `server`
+      still calls `api.New()` directly, `watch status` included: the small
+      inconsistency beats a status command with side effects. `otzar mcp` keeps its
+      own copy of the dance — stdout is its JSON-RPC channel, and the reasoning is
+      documented at the call site. The "starting server…" notice goes to stderr, so
+      `otzar list | wc -l` still counts only paths. It is gated on an up-front
+      `IsHealthy` check rather than on `Start` returning `ErrAlreadyRunning`, which
+      would only be known *after* the wait the notice exists to explain. The start
+      lock already made concurrent cold invocations safe. No `--no-start` escape
+      hatch until something needs one. Verified cold end to end (`list` and `query`
+      both boot a stopped server); two tests in `client_test.go` cover the
+      short-circuit and the boot attempt without ever spawning a JVM.
 - [ ] Windows support. The server half is already portable (the jar runs anywhere
       with a JDK; Ollama ships a Windows build) except for
       `Files/setPosixFilePermissions` in `rag.config`, which throws on NTFS — a
