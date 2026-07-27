@@ -48,10 +48,15 @@
   separator named here. Adding a locator (docx paragraphs, say) means an entry in
   both places.
 
-  \"line\"  `\\R` — one unit per source line, which is how a text file arrives anyway.
-  \"page\"  `\\f` — a form feed per page, which rag.index.extract.pdf writes out."
-  {"line" #"\R"
-   "page" #"\f"})
+  \"line\"       `\\R` — one unit per source line, which is how a text file arrives
+                anyway. HTML keeps this unit by stripping tags in place, without
+                ever adding or removing a newline.
+  \"page\"       `\\f` — a form feed per page, which rag.index.extract.pdf writes out.
+  \"paragraph\"  `\\u2029` — U+2029 PARAGRAPH SEPARATOR between the `<w:p>`s of a
+                .docx, which rag.index.extract.docx writes out."
+  {"line"      #"\R"
+   "page"      #"\f"
+   "paragraph" #"\u2029"})
 
 (defn segment
   "str, locator:str? -> [{:text str, :loc int}]

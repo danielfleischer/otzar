@@ -28,10 +28,11 @@ type SearchInput struct {
 // sits, the fused score, and the chunk text itself.
 //
 // The location is three fields, not two, because what you can cite depends on the
-// format: locator says whether loc_start/loc_end count lines or pages, so the
-// model can write file.md:42-47 for one and paper.pdf p.4 for the other. All
-// three are omitted for chunks indexed before locator tracking — an absent field
-// keeps the model from citing a range that was never computed.
+// format: locator says whether loc_start/loc_end count lines, pages, or
+// paragraphs, so the model can write file.md:42-47 for one, paper.pdf p.4 for
+// another, and notes.docx ¶12 for the third. All three are omitted for chunks
+// indexed before locator tracking — an absent field keeps the model from citing a
+// range that was never computed.
 type SearchHit struct {
 	ID       string  `json:"id"`
 	Path     string  `json:"path"`
@@ -66,13 +67,14 @@ func addSearch(s *mcpsdk.Server, c *api.Client) {
 			"jobs. The index lives outside the current working directory, so it is the " +
 			"only way to reach these files — Grep and Read cannot see them. Call " +
 			"list_indexed_paths if you need to know whether a topic area is covered. " +
-			"Hybrid keyword+vector retrieval over text, code, markdown, and PDF. Returns " +
-			"ranked text chunks, each with its source file path, the 1-based range the " +
-			"chunk spans (loc_start/loc_end) together with the unit that range is in " +
-			"(locator: \"line\" or \"page\"), and an id you can pass to get_document to " +
-			"read the full file. Cite a line range as path:42-47 and a page range as " +
-			"path p.4 — never the other way round, and never invent a range when the " +
-			"fields are absent.",
+			"Hybrid keyword+vector retrieval over text, code, markdown, HTML, PDF, and " +
+			"Word documents. Returns ranked text chunks, each with its source file path, " +
+			"the 1-based range the chunk spans (loc_start/loc_end) together with the unit " +
+			"that range is in (locator: \"line\", \"page\", or \"paragraph\"), and an id " +
+			"you can pass to get_document to read the full file. Cite a line range as " +
+			"path:42-47, a page range as path p.4, and a paragraph range as path ¶12 — " +
+			"never the other way round, and never invent a range when the fields are " +
+			"absent.",
 	}, func(_ context.Context, _ *mcpsdk.CallToolRequest, in SearchInput) (*mcpsdk.CallToolResult, SearchOutput, error) {
 		req := api.QueryRequest{Q: in.Q, K: in.K, Mode: in.Mode}
 		filters := map[string]any{}

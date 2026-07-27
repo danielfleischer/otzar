@@ -131,10 +131,16 @@ otzar index -f ~/notes            # force re-embed even if unchanged
 Unchanged files are skipped on re-index. On a TTY you get a live per-file chunk
 progress view; add `-j/--json` for machine-readable output.
 
-Indexable file types: plain text, markdown, and source code (read as-is), and
+Indexable file types: plain text, markdown, and source code (read as-is);
+**HTML** (tags stripped in place, so line numbers still point at the file);
 **PDF** (text extracted with PDFBox — soft line wraps rejoined into prose; no OCR,
-so a scanned PDF with no text layer is skipped). Anything else is ignored. Formats
-live in one registry, `server/src/rag/index/extractor.clj`, if you want to add one.
+so a scanned PDF with no text layer is skipped); and **docx** (paragraphs from
+`word/document.xml`; the old binary `.doc` is not supported). Anything else is
+ignored. Formats live in one registry, `server/src/rag/index/extractor.clj`, if
+you want to add one.
+
+Each format declares what a hit can cite, since that differs: a line for text and
+HTML, a page for a PDF, a paragraph for a docx.
 
 ### List what's indexed
 
@@ -162,7 +168,8 @@ and `--after` are metadata filters that apply to any mode. `-j/--json` emits raw
 results including the hybrid score breakdown.
 
 Hits print with the location to cite, in whatever unit the source actually has —
-`~/notes/rag.md:42-47` for a text file, `~/papers/rag.pdf p.4` for a PDF.
+`~/notes/rag.md:42-47` for a text file, `~/papers/rag.pdf p.4` for a PDF,
+`~/notes/report.docx ¶12` for a Word document.
 
 ### Admin (index maintenance)
 

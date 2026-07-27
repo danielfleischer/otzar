@@ -81,15 +81,20 @@ keyword (BM25), vector (kNN over embeddings), or hybrid (RRF fusion of both).
 // location renders a hit's source in the form you'd cite or paste it: line-based
 // chunks as "file.md:42-47" (or "file.md:42" for one line), which editors and
 // terminals turn into a jump; page-based ones as "paper.pdf p.4-5", since a PDF
-// has no line to jump to. Falls back to the bare path when the chunk carries no
-// span at all — a chunk indexed before locator tracking.
+// has no line to jump to; paragraph-based ones as "notes.docx ¶12", since a
+// .docx has neither — its line and page breaks are decided at display time, and
+// only the paragraph sequence is in the file. Falls back to the bare path when
+// the chunk carries no span at all — a chunk indexed before locator tracking.
 func location(h api.Hit) string {
 	if h.LocStart == 0 {
 		return h.Path
 	}
 	sep, span := ":", fmt.Sprintf("%d", h.LocStart)
-	if h.Locator == "page" {
+	switch h.Locator {
+	case "page":
 		sep = " p."
+	case "paragraph":
+		sep = " ¶"
 	}
 	if h.LocEnd > h.LocStart {
 		span = fmt.Sprintf("%d-%d", h.LocStart, h.LocEnd)

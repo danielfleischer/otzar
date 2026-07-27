@@ -40,7 +40,7 @@ install-dev: build ## Install just the client, bound to this checkout
 	@echo "installed $(INSTALL_DIR)/otzar (bound to $(CURDIR)/server)"
 
 check-server: ## Compile-check every server namespace (no boot, no artifact)
-	cd server && clojure -M:check -e "(run! require '[rag.config rag.main rag.http rag.index rag.roots rag.watch rag.embed rag.index.walker rag.index.extractor rag.index.extract.pdf rag.index.segmenter rag.index.chunker rag.index.lucene rag.query.hybrid]) (println \"server namespaces compiled OK\")"
+	cd server && clojure -M:check -e "(run! require '[rag.config rag.main rag.http rag.index rag.roots rag.watch rag.embed rag.index.walker rag.index.extractor rag.index.extract.pdf rag.index.extract.html rag.index.extract.docx rag.index.segmenter rag.index.chunker rag.index.lucene rag.query.hybrid]) (println \"server namespaces compiled OK\")"
 
 server-deps: ## Pre-fetch the server's JVM dependencies
 	cd server && clojure -P

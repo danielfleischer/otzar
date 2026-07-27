@@ -24,8 +24,9 @@
   *what its extracted text is divided into*, and marks the divisions with a
   separator `rag.index.segmenter` splits on:
 
-    :locator \"line\"  units are separated by a line break — plain text and code
-    :locator \"page\"  units are separated by a form feed (\\f) — PDF
+    :locator \"line\"       separated by a line break — plain text, code, HTML
+    :locator \"page\"       separated by a form feed (\\f) — PDF
+    :locator \"paragraph\"  separated by U+2029 — docx
 
   The segmenter numbers the units 1-based and tags each sentence with its unit;
   the chunker folds those into the chunk's [:loc_start :loc_end] span, and the
@@ -39,6 +40,8 @@
   plain-text concern — a PDF is *supposed* to be binary — so it lives in the text
   extractor, not in the dispatcher."
   (:require [clojure.string :as str]
+            [rag.index.extract.docx :as docx]
+            [rag.index.extract.html :as html]
             [rag.index.extract.pdf :as pdf])
   (:import [java.nio.file Files]
            [java.nio.charset StandardCharsets]))
@@ -96,8 +99,18 @@
                   "c" "h" "cc" "cpp" "hpp" "cxx" "hxx"
                   "rb" "php" "pl" "sh" "bash" "zsh" "fish" "lua" "el" "vim"
                   "json" "yaml" "yml" "toml" "ini" "cfg" "conf" "properties"
-                  "html" "htm" "css" "scss" "less" "sql" "xml" "csv" "tsv"}
+                  "css" "scss" "less" "sql" "xml" "csv" "tsv"}
     :extract    extract-text}
+
+   {:name       :html
+    :locator    "line"
+    :extensions #{"html" "htm" "xhtml"}
+    :extract    html/extract}
+
+   {:name       :docx
+    :locator    "paragraph"
+    :extensions #{"docx"}
+    :extract    docx/extract}
 
    {:name       :pdf
     :locator    "page"

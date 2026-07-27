@@ -136,10 +136,11 @@ plan is deferred.
 `locator` + `loc_start`/`loc_end` are the chunk's citation span — where in the
 source it came from, and in what units:
 
-| `locator` | units                 | formats           | cite as            |
-|-----------|-----------------------|-------------------|--------------------|
-| `line`    | 1-based source lines  | text, code, md, … | `/notes/rag.md:42-47` |
-| `page`    | 1-based page numbers  | PDF               | `/papers/rag.pdf p.4` |
+| `locator`   | units                     | formats                 | cite as                  |
+|-------------|---------------------------|-------------------------|--------------------------|
+| `line`      | 1-based source lines      | text, code, md, HTML, … | `/notes/rag.md:42-47`    |
+| `page`      | 1-based page numbers      | PDF                     | `/papers/rag.pdf p.4`    |
+| `paragraph` | 1-based paragraph numbers | docx                    | `/notes/report.docx ¶12` |
 
 The span is inclusive, and `loc_start == loc_end` when the chunk sits in a single
 unit. Read the unit from `locator` rather than from the file extension: the
