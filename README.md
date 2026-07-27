@@ -1,6 +1,9 @@
 # otzar
 
-*otzar* (אוֹצָר) is Hebrew for **treasure** — and, fittingly, *thesaurus*.
+<p align="center">
+  <img src="docs/otzar.jpg" alt="An open chest of bundled notes, journals, and papers" width="700">
+</p>
+
 
 A personal **hybrid retrieval system** — dense vector similarity + keyword (BM25)
 + metadata filters over your local files, in one query. A Clojure/Lucene server
@@ -10,6 +13,8 @@ a tool.
 
 See [`docs/rag-project-plan.md`](docs/rag-project-plan.md) for the full design and
 [`docs/api.md`](docs/api.md) for the HTTP contract.
+
+*otzar* (אוֹצָר) is Hebrew for **treasure** — and, fittingly, *thesaurus*.
 
 ## Status
 

@@ -33,6 +33,17 @@ the source of truth — leave it as-is.
       `config.clj` is `bge-m3` (1024-dim), and the code is internally consistent
       about that. Update the docs — and confirm which model you actually intend to
       ship as the default.
+- [ ] **Clean up the project plan and call it `design.md`.** `rag-project-plan.md`
+      is currently framed as a record of how the project got designed rather than
+      what it was designed to be: "the shape we agreed on", the first-person plural
+      throughout, the `Resolved:` annotations, "the first draft of this section
+      said X" (§13.7), and the opening "this document is the starting point —
+      decisions can change". Flatten all of that into present tense describing the
+      current design, and rename the file `docs/design.md`. The rationale and the
+      rejected alternatives are the valuable part and should stay — they're what
+      makes the Lucene/BreakIterator/Go choices legible to a reader. Inbound links
+      to fix: `README.md`, `CONTRIBUTING.md` (which also calls it "the original
+      design doc (kept for history)" — no longer the framing), and §1 above.
 
 ## 2. Repo hygiene for OSS
 
