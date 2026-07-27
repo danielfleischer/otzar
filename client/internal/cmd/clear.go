@@ -6,7 +6,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"otzar/internal/api"
 	"otzar/internal/render"
 )
 
@@ -30,7 +29,7 @@ The wipe is irreversible, so clear asks for confirmation first; pass --yes to
 skip the prompt (e.g. in scripts).`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.New()
+		c, err := client()
 		if err != nil {
 			return err
 		}

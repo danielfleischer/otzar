@@ -5,7 +5,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"otzar/internal/api"
 	"otzar/internal/render"
 )
 
@@ -19,7 +18,7 @@ and the total number of chunks across them. Unlike 'server status' this is just
 the index counts, with no server-health line.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.New()
+		c, err := client()
 		if err != nil {
 			return err
 		}

@@ -39,7 +39,7 @@ chunks to the local index. Directories are only descended with --recursive.`,
 
 		// No total budget to set: IndexStream is bounded by silence, not duration,
 		// so a run of any length is fine as long as the server keeps talking.
-		c, err := api.New()
+		c, err := client()
 		if err != nil {
 			return err
 		}

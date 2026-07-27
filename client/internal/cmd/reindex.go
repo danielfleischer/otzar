@@ -35,7 +35,7 @@ skipped silently (use 'otzar admin prune' to drop them).`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Re-embedding a whole index is slow, but IndexStream is bounded by silence
 		// rather than by duration, so the default client is right here too.
-		c, err := api.New()
+		c, err := client()
 		if err != nil {
 			return err
 		}

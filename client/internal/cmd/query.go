@@ -46,7 +46,7 @@ keyword (BM25), vector (kNN over embeddings), or hybrid (RRF fusion of both).
 			req.Filters = filters
 		}
 
-		c, err := api.New()
+		c, err := client()
 		if err != nil {
 			return err
 		}

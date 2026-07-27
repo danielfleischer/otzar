@@ -95,9 +95,12 @@ otzar server restart  # stop (if running) then start — picks up server changes
 otzar server stop     # graceful shutdown
 ```
 
-The server has to be running for `index`, `query`, `list`, and `admin *`; only
-`otzar mcp` starts it on its own. Booting takes a second or two — ~0.65s from the
-packaged jar, ~1.4s from a source checkout.
+You rarely need `start`. Anything that talks to the *index* — `index`, `query`,
+`list`, `admin *`, and `otzar mcp` — boots the server itself if it isn't running,
+printing a one-line notice to stderr so piped output stays clean. The `server`
+commands stay explicit, since a `status` that started what you asked it to report
+on would be no use. Booting takes a second or two — ~0.65s from the packaged jar,
+~1.4s from a source checkout.
 
 `server restart` is the development loop: from a checkout it picks up the Clojure
 you just edited, and from an installed jar it picks up whatever `make uber` last

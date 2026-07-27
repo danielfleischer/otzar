@@ -6,7 +6,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"otzar/internal/api"
 	"otzar/internal/render"
 )
 
@@ -26,7 +25,7 @@ outside any root, shows up here and not there.
 Output is bare paths so it pipes: 'otzar list | wc -l', 'otzar list | fzf'.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.New()
+		c, err := client()
 		if err != nil {
 			return err
 		}

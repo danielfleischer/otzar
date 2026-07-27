@@ -5,7 +5,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"otzar/internal/api"
 	"otzar/internal/render"
 )
 
@@ -25,7 +24,7 @@ the new location to pick it up again.
 Use --dry-run to list the orphans without deleting anything.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.New()
+		c, err := client()
 		if err != nil {
 			return err
 		}
