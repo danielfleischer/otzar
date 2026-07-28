@@ -2,7 +2,9 @@
   "Tests for the index facade's orchestration logic: filter normalisation, mtime
   coercion, search-mode dispatch, and the change-detection gate in file->chunks.
   Lucene, the extractor/segmenter/chunker, and the embedder are all stubbed, so
-  nothing touches disk or Ollama."
+  nothing touches disk or Ollama — except the prune! section at the end, which
+  reconciles a real (throwaway) index against real temp files, since that
+  reconciliation is precisely what a stub would hide."
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.java.io :as io]
             [rag.index :as index]
@@ -262,3 +264,104 @@
                      [#{(.getPath fdir)} {:recursive false}]}
                    (set @calls))))))
       (finally (.delete rdir) (.delete fdir)))))
+
+;; ── prune! ──────────────────────────────────────────────────────────────────
+;; Real temp files and a real throwaway Lucene index (no embedding — chunks are
+;; written straight in). prune! decides what to drop by comparing the index
+;; against disk, so both sides have to be real for the test to mean anything.
+;; The invariant these guard, beyond the counts: prune! reconciles the *index*
+;; and must never touch a file on disk.
+
+(defn- rm-r [dir]
+  (run! io/delete-file (reverse (file-seq dir))))
+
+(defn- chunk-for
+  "One chunk map standing in for `file`'s indexed content, keyed the way
+  index-paths! would key it (doc_id = sha1 of the absolute path)."
+  [^File file]
+  (let [path   (.getAbsolutePath file)
+        doc-id (#'index/sha1 path)]
+    {:id (str doc-id ":0") :doc_id doc-id :path path :ext "md"
+     :mtime (.lastModified file) :chunk_idx 0 :text (str "contents of " path)}))
+
+(defn- with-indexed-files
+  "Create `n` real .md files in a temp dir, index one chunk each into a throwaway
+  Lucene index, and call `(f files idx)` with index/ensure! pointed at it. Both
+  temp dirs are removed afterwards."
+  [n f]
+  (let [dir     (temp-dir)
+        idx-dir (temp-dir)
+        files   (mapv (fn [i]
+                        (doto (io/file dir (str "f" i ".md")) (spit "hello")))
+                      (range n))
+        idx     (lucene/open idx-dir)]
+    (try
+      (lucene/add-chunks! idx (map chunk-for files))
+      (lucene/commit! idx)
+      (with-redefs [index/ensure! (constantly idx)]
+        (f files idx))
+      (finally
+        (lucene/close idx)
+        (rm-r dir)
+        (rm-r idx-dir)))))
+
+;; 20 files, one deleted, is deliberate: at 5% of the segment the deletion is
+;; below TieredMergePolicy's *natural* deletesPctAllowed (20%), so no background
+;; merge will expunge it on its own and prune!'s own reclaim is the only thing
+;; that can — which is what we want to test, and what keeps the assertions
+;; deterministic (a natural merge would land asynchronously, after the commit).
+(deftest prune-drops-only-vanished-files
+  (with-indexed-files 20
+    (fn [files idx]
+      (let [[gone & kept] files
+            gone-path (.getAbsolutePath ^File gone)]
+        (.delete ^File gone)
+        (let [r (index/prune!)]
+          (is (= [gone-path] (:removed r)))
+          (is (= 19 (:kept r)))
+          (is (nil? (:dry_run r))))
+
+        (testing "the files that still exist are untouched on disk"
+          (is (every? #(.exists ^File %) kept)))
+
+        (testing "only the vanished file's chunks left the index"
+          (is (= (sort (map #(.getAbsolutePath ^File %) kept)) (lucene/paths idx)))
+          (is (= {:num_docs 19 :num_chunks 19} (lucene/stats idx))))
+
+        (testing "and it stays gone — a second prune finds nothing to remove"
+          ;; The watch-sweep bug: a prune that doesn't stick reports the same
+          ;; orphan on every sweep, forever.
+          (is (= {:removed [] :kept 19} (index/prune!))))))))
+
+(deftest prune-with-nothing-missing-changes-nothing
+  (with-indexed-files 3
+    (fn [files idx]
+      (let [paths (sort (map #(.getAbsolutePath ^File %) files))]
+        (is (= {:removed [] :kept 3} (index/prune!)))
+        (testing "every file is still on disk and still indexed"
+          (is (every? #(.exists ^File %) files))
+          (is (= paths (lucene/paths idx)))
+          (is (= {:num_docs 3 :num_chunks 3} (lucene/stats idx))))))))
+
+(deftest prune-dry-run-reports-without-removing
+  (with-indexed-files 2
+    (fn [files idx]
+      (let [[gone keep] files
+            gone-path (.getAbsolutePath ^File gone)]
+        (.delete ^File gone)
+        (let [r (index/prune! {:dry-run true})]
+          (is (= [gone-path] (:removed r)))
+          (is (= 1 (:kept r)))
+          (is (true? (:dry_run r))))
+
+        (testing "the index is left as it was — the orphan is still listed"
+          (is (= [gone-path (.getAbsolutePath ^File keep)] (lucene/paths idx)))
+          (is (= {:num_docs 2 :num_chunks 2} (lucene/stats idx))))
+
+        (testing "and the file that does exist is still there"
+          (is (.exists ^File keep)))))))
+
+(deftest prune-on-an-empty-index-is-a-noop
+  (with-indexed-files 0
+    (fn [_files _idx]
+      (is (= {:removed [] :kept 0} (index/prune!))))))

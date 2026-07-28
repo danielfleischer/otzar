@@ -74,6 +74,28 @@
       (is (= "d2:0" (:id hit)))
       (is (empty? (select-keys hit [:locator :loc_start :loc_end]))))))
 
+(deftest reclaim-expunges-a-lightly-deleted-segment
+  (testing "a deleted path leaves paths/stats even when it is a tiny share of the segment"
+    ;; The regression: `paths` reads the term dictionary, which keeps a deleted
+    ;; doc's terms until its segment is rewritten. Lucene's default
+    ;; forceMergeDeletesPctAllowed (10%) makes forceMergeDeletes *skip* a segment
+    ;; whose deletes are a small fraction of it — so the file stays in the term
+    ;; dictionary, looks like an orphan to the next prune, and gets "removed"
+    ;; again on every watch sweep. 1 deleted file out of 20 is 5%, under that
+    ;; default, so this fails unless `open` lowers the threshold to 0.
+    (let [files (mapv #(str "/f" % ".md") (range 20))]
+      (lucene/add-chunks! *idx* (map-indexed (fn [i p] (mk-chunk (str "d" i) p 0)) files))
+      (lucene/commit! *idx*)
+      (is (= 20 (count (lucene/paths *idx*))))
+
+      (lucene/delete-by-paths! *idx* ["/f7.md"])
+      (lucene/reclaim-deletes! *idx*)
+
+      (testing "the path is really gone, so a second prune won't rediscover it"
+        (is (not (contains? (set (lucene/paths *idx*)) "/f7.md")))
+        (is (= 19 (count (lucene/paths *idx*))))
+        (is (= {:num_docs 19 :num_chunks 19} (lucene/stats *idx*)))))))
+
 (deftest index-is-reusable-after-clear
   (testing "the index still accepts new chunks after a clear!"
     (seed!)

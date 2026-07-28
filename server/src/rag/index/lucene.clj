@@ -68,7 +68,7 @@
     index in one call (deleteAll) — the full reset behind `otzar admin clear`."
   (:import [org.apache.lucene.store FSDirectory]
            [org.apache.lucene.index IndexWriter IndexWriterConfig LeafReaderContext
-            MultiTerms Term VectorSimilarityFunction]
+            MultiTerms Term TieredMergePolicy VectorSimilarityFunction]
            [org.apache.lucene.document Document Field$Store StringField TextField
             LongPoint IntPoint StoredField NumericDocValuesField KnnFloatVectorField]
            [org.apache.lucene.analysis.standard StandardAnalyzer]
@@ -79,11 +79,23 @@
 (defn open
   "File -> component
   Open (creating if absent) the Lucene index rooted at `dir` (a java.io.File).
-  Return the component map the other fns receive."
+  Return the component map the other fns receive.
+
+  The merge policy is the default TieredMergePolicy with one setting changed:
+  forceMergeDeletesPctAllowed 0, down from 10. That percentage is the threshold
+  forceMergeDeletes (reclaim-deletes!) applies per segment — with the default, a
+  segment whose deleted docs are under 10% of it is left alone, so a single pruned
+  file's `path` term survives in the term dictionary and `paths` keeps reporting
+  the file as indexed. It then looks like an orphan to the *next* prune, which
+  reports removing it again, every sweep, forever. At 0 every segment carrying
+  deletes is rewritten, so a prune actually takes effect."
   [dir]
   (let [directory (FSDirectory/open (.toPath dir))
         analyzer  (StandardAnalyzer.)
-        writer    (IndexWriter. directory (IndexWriterConfig. analyzer))
+        config    (doto (IndexWriterConfig. analyzer)
+                    (.setMergePolicy (doto (TieredMergePolicy.)
+                                       (.setForceMergeDeletesPctAllowed 0.0))))
+        writer    (IndexWriter. directory config)
         manager   (SearcherManager. writer (SearcherFactory.))]
     {:dir directory :analyzer analyzer :writer writer :manager manager}))
 
@@ -156,8 +168,11 @@
   Needed after delete-by-paths! because `paths` and stats/:num_docs read the term
   dictionary, which keeps a deleted doc's terms until its segment is rewritten —
   so without this a pruned file would linger in list_indexed_paths until the next
-  natural merge. forceMergeDeletes rewrites every segment that has deletes, so this
-  is an occasional-maintenance cost (the prune path), not something for a hot path."
+  natural merge. forceMergeDeletes rewrites every segment that has deletes *only*
+  because `open` sets forceMergeDeletesPctAllowed to 0 — at Lucene's default of 10%
+  a lightly-deleted segment is skipped and the prune never sticks (see `open`).
+  Rewriting whole segments is an occasional-maintenance cost (the prune path), not
+  something for a hot path."
   [{:keys [^IndexWriter writer ^SearcherManager manager]}]
   (.forceMergeDeletes writer true)
   (.commit writer)
