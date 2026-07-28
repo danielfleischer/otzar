@@ -275,6 +275,14 @@
 (defn- rm-r [dir]
   (run! io/delete-file (reverse (file-seq dir))))
 
+(defn- snapshot
+  "Every file under `dir` as absolute-path -> [length mtime sha1-of-contents], so
+  a test can prove a tree came through an index run or a prune untouched: no file
+  created, removed, rewritten, or even re-stamped."
+  [dir]
+  (into {} (for [^File f (file-seq dir) :when (.isFile f)]
+             [(.getAbsolutePath f) [(.length f) (.lastModified f) (#'index/sha1 (slurp f))]])))
+
 (defn- chunk-for
   "One chunk map standing in for `file`'s indexed content, keyed the way
   index-paths! would key it (doc_id = sha1 of the absolute path)."
@@ -314,12 +322,17 @@
   (with-indexed-files 20
     (fn [files idx]
       (let [[gone & kept] files
-            gone-path (.getAbsolutePath ^File gone)]
+            gone-path (.getAbsolutePath ^File gone)
+            dir       (.getParentFile ^File gone)]
         (.delete ^File gone)
-        (let [r (index/prune!)]
+        (let [before (snapshot dir)
+              r      (index/prune!)]
           (is (= [gone-path] (:removed r)))
           (is (= 19 (:kept r)))
-          (is (nil? (:dry_run r))))
+          (is (nil? (:dry_run r)))
+
+          (testing "prune reconciles the index; the directory on disk is untouched"
+            (is (= before (snapshot dir)))))
 
         (testing "the files that still exist are untouched on disk"
           (is (every? #(.exists ^File %) kept)))
@@ -365,3 +378,69 @@
   (with-indexed-files 0
     (fn [_files _idx]
       (is (= {:removed [] :kept 0} (index/prune!))))))
+
+;; ── the source tree is read-only ────────────────────────────────────────────
+;; otzar reads what it indexes and writes only its own state under ~/.otzar.
+;; These run the real walk → extract → segment → chunk pipeline over a real tree
+;; (only the embedder and the index location are stubbed) and prove the tree
+;; comes back byte-for-byte, mtimes included. rag.fs-safety-test guards the same
+;; property at the source level, for code that doesn't exist yet.
+
+(defn- source-tree
+  "A small tree in a fresh temp dir: two indexable files (one nested) and one the
+  walker skips for its extension."
+  []
+  (let [dir (temp-dir)
+        sub (doto (io/file dir "notes") (.mkdirs))]
+    (spit (io/file dir "a.md") "Alpha beta gamma.\nA second line about indexing.\n")
+    (spit (io/file sub "b.txt") "Nested plain text, also indexable.\n")
+    (spit (io/file dir "skipped.bin") "no extractor claims this extension\n")
+    dir))
+
+(defn- with-real-pipeline
+  "Call `(f dir idx)` with a real source tree and a real throwaway index, with
+  only the Ollama-bound calls stubbed (fixed 3-dim vectors) and index/ensure!
+  pointed at the temp index. Cleans up both temp dirs."
+  [f]
+  (let [dir     (source-tree)
+        idx-dir (temp-dir)
+        idx     (lucene/open idx-dir)]
+    (try
+      (with-redefs [index/ensure!         (constantly idx)
+                    embed/embedding-dim   (constantly 3)
+                    embed/model-spec      (constantly spec)
+                    embed/embed-documents (fn [texts & _]
+                                            (mapv (fn [_] (float-array [0.1 0.2 0.3])) texts))]
+        (f dir idx))
+      (finally
+        (lucene/close idx)
+        (rm-r dir)
+        (rm-r idx-dir)))))
+
+(deftest indexing-never-writes-to-the-source-tree
+  (with-real-pipeline
+    (fn [dir idx]
+      (let [before (snapshot dir)
+            r      (index/index-paths! [(.getPath dir)] {:recursive true})]
+        (testing "the two indexable files are indexed, the third never opened"
+          (is (= 2 (:indexed r)))
+          (is (empty? (:errors r)))
+          (is (= 2 (:num_docs (lucene/stats idx)))))
+
+        (testing "no file was created, removed, rewritten, or re-stamped"
+          (is (= before (snapshot dir))))
+
+        (testing "and neither does a re-index, or a forced re-embed of every file"
+          (index/index-paths! [(.getPath dir)] {:recursive true})
+          (index/index-paths! [(.getPath dir)] {:recursive true :force true})
+          (is (= before (snapshot dir))))))))
+
+(deftest clearing-the-index-leaves-the-source-tree-alone
+  ;; `otzar admin clear` wipes the index — never what was indexed.
+  (with-real-pipeline
+    (fn [dir idx]
+      (index/index-paths! [(.getPath dir)] {:recursive true})
+      (let [before (snapshot dir)]
+        (is (= {:removed_docs 2 :removed_chunks 2} (index/clear!)))
+        (is (= {:num_docs 0 :num_chunks 0} (lucene/stats idx)))
+        (is (= before (snapshot dir)))))))
