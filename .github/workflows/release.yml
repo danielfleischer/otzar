@@ -7,6 +7,12 @@ name: Release
 #
 # Triggered by pushing a tag: `git tag v0.1.0 && git push origin v0.1.0`.
 # Assumes CI is already green on the commit being tagged.
+#
+# The result is a *draft* release with an empty body: the release notes are
+# written by hand, and generated ones aren't worth the page they're on. So the
+# tag push is the build step, not the publish step — the assets land where they
+# can be downloaded and checked, and nothing is public until you write the body
+# and press Publish.
 
 on:
   push:
@@ -84,8 +90,21 @@ jobs:
         run: cd assets && sha256sum * > checksums.txt && cat checksums.txt
       # gh ships on the runner, so there's no third-party action in the path that
       # publishes artifacts.
-      - name: Create the release
+      #
+      # --notes "" is required, not decorative: without one of the notes flags,
+      # gh tries to open an editor and fails on a runner.
+      - name: Create the draft release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh release create "${{ github.ref_name }}" assets/* --generate-notes --verify-tag
+        run: gh release create "${{ github.ref_name }}" assets/* --draft --notes "" --verify-tag
+      - name: Where to write the notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          url=$(gh release view "${{ github.ref_name }}" --json url -q .url)
+          echo "Draft release created. Write the body, then publish:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- edit in the browser: $url" >> $GITHUB_STEP_SUMMARY
+          echo '- or from a checkout: `gh release edit ${{ github.ref_name }} -F notes.md --draft=false`' >> $GITHUB_STEP_SUMMARY
