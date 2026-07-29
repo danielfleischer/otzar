@@ -4,215 +4,79 @@
   <img src="docs/otzar.jpg" alt="An open chest of bundled notes, journals, and papers" width="700">
 </p>
 
-
-A personal **hybrid retrieval system** — dense vector similarity + keyword (BM25)
-+ metadata filters over your local files, in one query. A Clojure/Lucene server
-holds the index; a Go/Cobra CLI controls its lifecycle and is the primary UX. The
-same Go binary also speaks MCP (`otzar mcp`) so LLM hosts can search the index as
-a tool.
-
-See [`docs/design.md`](docs/design.md) for the full design and
-[`docs/api.md`](docs/api.md) for the HTTP contract.
+**Hybrid search over your own files** — dense vector similarity, BM25 keyword
+matching, and metadata filters in a single query, running entirely on your
+machine. A Clojure/Lucene server holds the index; a Go CLI is the UX; the same
+binary speaks **MCP**, so Claude Code and friends can search your notes as a tool.
 
 *otzar* (אוֹצָר) is Hebrew for **treasure** — and, fittingly, *thesaurus*.
 
-## Status
+```sh
+otzar index -r ~/notes
+otzar query "what did I decide about chunk overlap?"
+```
 
-Working end to end: hybrid retrieval (BM25 + kNN over embeddings, fused with RRF),
-Ollama-backed embeddings, metadata filters, live indexing progress, an MCP
-adapter, and index maintenance (`stats`, `prune`, `clear`, `reindex`). Indexes
-text, markdown, code, and PDF. Local-only, single-user, no auth — by design.
-
-Personal project, best-effort maintenance: issues and ideas welcome, pull
-requests probably not.
+```
+#  score  path                     snippet
+1  0.055  ~/notes/rag.md:42-47     Sentences are packed into windows of six, with two of…
+2  0.031  ~/papers/rag.pdf p.4     Overlapping windows keep a claim and its evidence in…
+```
 
 ## Install
 
-otzar is two files: the `otzar` client binary and `otzar-server.jar`, the whole
-server packaged with its dependencies. Grab one of each from the
-[latest release](../../releases/latest) — the jar is the same on every platform —
-and put them where you like:
+Two files: the `otzar` client binary and `otzar-server.jar` — the whole server
+packaged with its dependencies. Grab one of each from the
+[latest release](../../releases/latest); the jar is the same on every platform.
 
 ```sh
-# The path of least resistance: client on PATH, jar where the client looks.
 mkdir -p ~/.local/bin ~/.local/share/otzar
 tar -xzf otzar_*_darwin_arm64.tar.gz -C ~/.local/bin
 mv otzar-server.jar ~/.local/share/otzar/
 ```
 
-The client finds the server on its own, checking in order: `$OTZAR_SERVER_JAR`,
-the directory holding the `otzar` binary, `$XDG_DATA_HOME/otzar`,
-`~/.local/share/otzar`, and `<prefix>/share/otzar` or `<prefix>/lib/otzar` for a
-binary in `<prefix>/bin`. So dropping both files in one directory works too, as
-does a `/usr/local`-style split. To put the jar somewhere else entirely, set
-`OTZAR_SERVER_JAR=/path/to/otzar-server.jar`. `otzar server status` prints which
-server it resolved, which is the quickest way to check an install.
+You also need:
 
-### Requirements
+- **A JDK, 21 or newer**, to run the jar. `brew install openjdk` or any Temurin
+  build will do.
+- **[Ollama](https://ollama.com)** for embeddings: `ollama pull bge-m3`. It's the
+  default for its multilingual coverage — notably Hebrew, which most small
+  English-first embedding models handle poorly. Override with `OTZAR_EMBED_MODEL`.
 
-- **A JDK, 21 or newer**, to run the server jar. otzar looks for one at
-  `$OTZAR_JAVA`, then `$JAVA_HOME`, then (on macOS) `/usr/libexec/java_home` and
-  Homebrew's keg-only `openjdk`, then `java` on `PATH` — probing each by running
-  it, since macOS ships a `/usr/bin/java` stub that exists but fails when no JDK
-  is installed. If none works you'll get a clear error; `brew install openjdk` or
-  any Temurin build fixes it.
-- [Ollama](https://ollama.com), for embeddings. Pull the default model with
-  `ollama pull bge-m3` (1024-dim); override with `OTZAR_EMBED_MODEL`. `bge-m3` is
-  the default for its strong multilingual coverage — notably Hebrew, which most
-  small English-first embedding models handle poorly.
+otzar finds both on its own. The jar: `$OTZAR_SERVER_JAR`, the directory holding
+the binary, `$XDG_DATA_HOME/otzar`, `~/.local/share/otzar`, then
+`<prefix>/share|lib/otzar` for a binary in `<prefix>/bin` — so one directory with
+both files works, and so does a `/usr/local`-style split. The JVM: `$OTZAR_JAVA`,
+`$JAVA_HOME`, `/usr/libexec/java_home`, Homebrew's keg-only `openjdk`, then
+`PATH` — probing each by *running* it, since macOS ships a `/usr/bin/java` stub
+that exists and fails. `otzar server status` prints what it resolved, which is the
+quickest way to check an install.
 
-The Clojure CLI is *not* required to run a release — only to build one.
+Building from source: see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-## Build from source
+## Give it to Claude
 
-Needs the Clojure CLI (Homebrew's formula bundles a JDK) and Go ≥ 1.26.
+The same binary is an MCP server, so an LLM host can search your index instead of
+guessing. To register it with Claude Code:
 
 ```sh
-make build          # compile the client -> bin/otzar
-make uber           # package the server -> server/target/otzar-server.jar
-make install        # both, into ~/.local/bin + ~/.local/share/otzar
-make server-deps    # one-time: pre-fetch JVM deps (optional, speeds first build)
+claude mcp add notes -s user -- otzar mcp   # absolute path if otzar isn't on the host's PATH
 ```
 
-`make install` overrides the locations the obvious way:
+It exposes three read-only tools — `search`, `get_document`, `list_indexed_paths`
+— and starts the backing server itself, leaving it running when the host
+disconnects. Writes stay on the CLI: an LLM should be able to *find* things, not
+silently mutate the index.
 
-```sh
-make install INSTALL_DIR=/usr/local/bin DATA_DIR=/usr/local/share/otzar
-```
+**Name it after what you indexed, not after otzar.** The name becomes the tool
+prefix the model sees: `notes` gives it `mcp__notes__search`, which reads like
+something to reach for when you ask about your notes, where `mcp__otzar__search`
+is a word that means nothing to a model. Pick `papers`, `research`, `journal` —
+whatever your corpus actually is. Nothing depends on it; `claude mcp remove <name>`
+and add it again to change your mind.
 
-For working *on* otzar, `make install-dev` installs a client bound to your
-checkout — it runs the server from source via `clojure -M:run`, so your edits
-take effect without repackaging. A checkout's `./server` also wins over any
-installed jar when you run `otzar` from the repo root.
-
-## Usage
-
-From a checkout these are `./bin/otzar`; installed, just `otzar`.
-
-### Server lifecycle
-
-```sh
-otzar server start    # boot the server (background JVM)
-otzar server status   # health + index stats, and which server it resolved
-otzar server restart  # stop (if running) then start — picks up server changes
-otzar server stop     # graceful shutdown
-```
-
-You rarely need `start`. Anything that talks to the *index* — `index`, `query`,
-`list`, `admin *`, and `otzar mcp` — boots the server itself if it isn't running,
-printing a one-line notice to stderr so piped output stays clean. The `server`
-commands stay explicit, since a `status` that started what you asked it to report
-on would be no use. Booting takes a second or two — ~0.65s from the packaged jar,
-~1.4s from a source checkout.
-
-`server restart` is the development loop: from a checkout it picks up the Clojure
-you just edited, and from an installed jar it picks up whatever `make uber` last
-packaged.
-
-### Auto-reindex
-
-```sh
-otzar server watch status              # armed? next sweep when? last sweep how?
-otzar server watch enable --interval 30m
-otzar server watch disable
-```
-
-Off by default. Once armed, the server re-scans the trees you've indexed on an
-interval and reconciles new, changed, and deleted files, so you don't have to run
-`index` again by hand. Scanning an unchanged tree is cheap — a stat per file, no
-embedding, so the model never loads — and the setting persists across restarts.
-The first sweep runs one interval after you enable it, never immediately.
-
-### Index
-
-```sh
-otzar index notes.md report.pdf   # index individual files
-otzar index -r ~/notes            # descend into a directory
-otzar index -f ~/notes            # force re-embed even if unchanged
-```
-
-Unchanged files are skipped on re-index. On a TTY you get a live per-file chunk
-progress view; add `-j/--json` for machine-readable output.
-
-Indexable file types: plain text, markdown, and source code (read as-is);
-**HTML** (tags stripped in place, so line numbers still point at the file);
-**PDF** (text extracted with PDFBox — soft line wraps rejoined into prose; no OCR,
-so a scanned PDF with no text layer is skipped); and **docx** (paragraphs from
-`word/document.xml`; the old binary `.doc` is not supported). Anything else is
-ignored. Formats live in one registry, `server/src/rag/index/extractor.clj`, if
-you want to add one.
-
-Each format declares what a hit can cite, since that differs: a line for text and
-HTML, a page for a PDF, a paragraph for a docx.
-
-### List what's indexed
-
-```sh
-otzar list          # one absolute path per line
-otzar ls | wc -l    # bare paths, so it pipes
-otzar list -j       # {count, paths}
-```
-
-The index's own record, which is not the same as `roots.edn`: roots are the trees
-you asked for (what the watch sweep re-scans), while this is what actually made
-it in.
-
-### Query
-
-```sh
-otzar query "vector database tradeoffs"          # hybrid (default)
-otzar query -m keyword "exact phrase"            # BM25 only
-otzar query -m vector "semantically similar"     # kNN only
-otzar query -k 5 -e md,txt -p ~/notes/ "topic"   # top-5, filtered
-```
-
-`--mode` picks the retriever (`hybrid` | `keyword` | `vector`); `--ext`, `--path`,
-and `--after` are metadata filters that apply to any mode. `-j/--json` emits raw
-results including the hybrid score breakdown.
-
-Hits print with the location to cite, in whatever unit the source actually has —
-`~/notes/rag.md:42-47` for a text file, `~/papers/rag.pdf p.4` for a PDF,
-`~/notes/report.docx ¶12` for a Word document.
-
-### Admin (index maintenance)
-
-```sh
-otzar admin stats     # documents and chunks in the index
-otzar admin prune     # drop indexed files that no longer exist on disk
-otzar admin clear     # wipe the entire index
-otzar admin reindex   # re-embed everything (after a chunker/model change)
-```
-
-### MCP
-
-```sh
-otzar mcp             # speak MCP over stdio (launched by an LLM host)
-```
-
-`mcp` exposes read-only tools — `search`, `get_document`, `list_indexed_paths` —
-to an LLM host (Claude Desktop/Code) over stdin/stdout. It starts the backing
-server automatically and leaves it running when the host disconnects.
-
-To register it with Claude Code:
-
-```sh
-claude mcp add notes -s user -- otzar mcp    # use an absolute path if otzar isn't on the host's PATH
-```
-
-**Name it after what you indexed, not after otzar.** The name you pass becomes
-the tool prefix the model sees — `notes` gives it `mcp__notes__search`, which
-reads like something to reach for when you ask about your notes. `otzar` gives it
-`mcp__otzar__search`, a word that means nothing to a model and that you then have
-to invoke by name. Pick `notes`, `papers`, `research`, `wiki`, `journal` —
-whatever your corpus actually is. It is a local label; nothing in otzar depends
-on it, and you can change it any time with `claude mcp remove <name>` followed by
-another `add`.
-
-For the same reason, tell your host what lives in the index. The tool
-descriptions describe the *shape* of the corpus (notes, papers, saved reading)
-because they ship to everyone; only you know it holds, say, ten years of
-org-mode journals. A couple of lines in `CLAUDE.md` (or your host's equivalent)
-close that gap:
+For the same reason, tell your host what's in there. The tool descriptions
+describe the *shape* of a corpus because they ship to everyone; only you know it
+holds ten years of org-mode journals. Two lines in `CLAUDE.md` close the gap:
 
 ```markdown
 My notes and reading live in an otzar index (~/Documents/Notes, org + markdown).
@@ -220,28 +84,88 @@ When I ask what I wrote, read, or think about something, search it before
 answering rather than guessing.
 ```
 
-Drop `-s user` to scope the server to the current project instead, or use
-`-s project` to write a `.mcp.json` that ships with the repo. `claude mcp list`
-shows what is registered and whether it connects.
+Drop `-s user` to scope it to the current project, or use `-s project` to write a
+`.mcp.json` that ships with the repo. `claude mcp list` shows what's registered
+and whether it connects.
 
-### Shell completion
-
-Cobra generates completion scripts for bash, zsh, fish, and PowerShell. For fish:
+## Commands
 
 ```sh
-otzar completion fish | source                       # current shell
-otzar completion fish > ~/.config/fish/completions/otzar.fish   # persist
+otzar index notes.md report.pdf     # index individual files
+otzar index -r ~/notes              # descend into a directory
+otzar index -f ~/notes              # force re-embed even if unchanged
+
+otzar query "vector database tradeoffs"           # hybrid (default)
+otzar query -m keyword "exact phrase"             # BM25 only
+otzar query -m vector "semantically similar"      # kNN only
+otzar query -k 5 -e md,txt -p ~/notes/ "topic"    # top-5, filtered
+
+otzar list                          # every indexed path, one per line (alias: ls)
+otzar admin stats                   # documents and chunks in the index
+otzar admin prune                   # drop indexed files that no longer exist
+otzar admin clear                   # wipe the entire index
+otzar admin reindex                 # re-embed everything
+
+otzar server status                 # health, index stats, which server it resolved
+otzar server restart                # picks up server changes
+otzar server watch enable --interval 30m   # auto-reindex on a timer (off by default)
+
+otzar completion fish | source      # also bash, zsh, powershell
 ```
 
-Run `otzar completion --help` for the other shells.
+A few things worth knowing:
 
-## Layout
+- **You never have to start the server.** Anything that talks to the *index* —
+  `index`, `query`, `list`, `admin *`, `otzar mcp` — boots it if it isn't running,
+  with a one-line notice on stderr so piped output stays clean. The `server`
+  commands stay explicit, since a `status` that started what you asked it to report
+  on would be no use.
+- **Re-indexing is cheap.** Unchanged files are skipped, so `otzar index -r ~/notes`
+  is safe to re-run. `server watch` does exactly that on an interval, reconciling
+  new, changed, and deleted files without loading the model.
+- `--mode` picks the retriever; `--ext`, `--path`, and `--after` filter any mode.
+- `-j/--json` on any command gives machine-readable output — for `query`, that
+  includes the hybrid score breakdown.
+
+## What it indexes
+
+Plain text, markdown, and source code (read as-is); **HTML** (tags stripped in
+place, so line numbers still point at the file); **PDF** (via PDFBox — soft line
+wraps rejoined into prose; no OCR, so a scanned PDF is skipped); and **docx**
+(paragraphs from `word/document.xml`; the old binary `.doc` is not supported).
+Anything else is ignored.
+
+Each format declares what a hit can cite, because that differs — a line for text
+and HTML, a page for a PDF, a paragraph for a docx:
 
 ```
-server/   Clojure server (JVM): HTTP API, Lucene index, indexing pipeline
-client/   Go + Cobra CLI: lifecycle, HTTP client, MCP adapter, rendering
-docs/     Shared HTTP contract and design notes
+~/notes/rag.md:42-47        ~/papers/rag.pdf p.4        ~/notes/report.docx ¶12
 ```
+
+Formats live in one registry, `server/src/rag/index/extractor.clj`, if you want to
+add one.
+
+## How it works
+
+Files are extracted, split into sentences with the JDK's `BreakIterator` (no
+model file, and it handles Hebrew), packed into overlapping chunks, embedded via
+Ollama, and written to a single Lucene index that holds the inverted index, the
+doc values for filters, and the HNSW vector graph in the same segment. A query
+runs BM25 and kNN with the same filters and fuses the two rankings with
+Reciprocal Rank Fusion.
+
+[`docs/design.md`](docs/design.md) explains the choices and the alternatives that
+were rejected; [`docs/api.md`](docs/api.md) is the HTTP contract between the two
+halves.
+
+## Status
+
+Working end to end and in daily use: hybrid retrieval, Ollama-backed embeddings,
+metadata filters, live indexing progress, the MCP adapter, auto-reindex, and index
+maintenance. Local-only, single-user, no auth — by design.
+
+Personal project, best-effort maintenance: issues and ideas welcome, pull requests
+probably not. See [`CONTRIBUTING.md`](CONTRIBUTING.md) to build and hack on it.
 
 ## License
 
