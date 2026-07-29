@@ -1,5 +1,9 @@
 # Contributing
 
+Personal project, best-effort maintenance: issues and ideas are welcome, pull
+requests probably not merged. This file is here so you can build it, run it, and
+hack on your own fork without reverse-engineering the Makefile.
+
 `otzar` is two toolchains glued together by the `Makefile`:
 
 - **`server/`** — Clojure/Lucene HTTP server that holds the index.
@@ -66,7 +70,7 @@ linter to install, and CI runs this same target — the server side's equivalent
   `docs/api.md` is the HTTP contract — update `api.md` when you change a route,
   and `design.md` when you change a decision it explains.
 
-## Before opening a PR
+## If you do open a PR
 
 1. `make test` and `make lint` pass.
 2. `docs/api.md` still matches the routes you touched (if any).
