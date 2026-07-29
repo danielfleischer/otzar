@@ -228,6 +228,7 @@ response shapes; the table below is the map.
 | GET    | `/health`       | `{status, uptime_s}` — also the client's liveness probe |
 | GET    | `/stats`        | `{num_docs, num_chunks}`                                |
 | GET    | `/paths`        | `{count, paths}` — the distinct source files indexed    |
+| GET    | `/roots`        | `{roots}` — the trees asked for, with their recursive flag |
 | POST   | `/index`        | Index paths (incremental; streams progress as NDJSON)   |
 | DELETE | `/index`        | Wipe the whole index                                    |
 | POST   | `/prune`        | Drop chunks for source files gone from disk             |
@@ -237,8 +238,10 @@ response shapes; the table below is the map.
 | POST   | `/watch`        | Toggle it / set the interval                            |
 | POST   | `/shutdown`     | `{ok: true}`, then the process exits                    |
 
-There is no `/reindex` route: `otzar admin reindex` re-embeds the indexed paths
-through `POST /index` with `force`, which needs no endpoint of its own.
+Two verbs are composed in the client rather than given a route of their own, both
+built from `POST /index`: `otzar admin reindex` re-embeds the files in `/paths`
+with `force`, and `otzar index --now` re-scans the trees in `/roots`. That is also
+why there is no `/reindex` route.
 
 ### 5.1 Query body
 
@@ -319,6 +322,7 @@ otzar server status                  # GET /health and /stats, plus which server
 otzar server watch status            # armed? next sweep when? last sweep how?
 otzar server watch enable [--interval 30m] | disable
 otzar index <path>... [-r] [-f]      # POST /index; -r recursive, -f force re-embed
+otzar index --now                    # re-scan the recorded roots (GET /roots -> POST /index)
 otzar list                           # GET /paths — one absolute path per line (alias: ls)
 otzar query "..." [-k N] [-m hybrid|vector|keyword] [-e md,txt] [-p PREFIX] [--after DATE]
 otzar admin stats                    # GET /stats — index size (docs, chunks)

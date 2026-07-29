@@ -94,6 +94,7 @@ and whether it connects.
 otzar index notes.md report.pdf     # index individual files
 otzar index -r ~/notes              # descend into a directory
 otzar index -f ~/notes              # force re-embed even if unchanged
+otzar index --now                   # re-scan everything already indexed
 
 otzar query "vector database tradeoffs"           # hybrid (default)
 otzar query -m keyword "exact phrase"             # BM25 only
@@ -121,8 +122,9 @@ A few things worth knowing:
   commands stay explicit, since a `status` that started what you asked it to report
   on would be no use.
 - **Re-indexing is cheap.** Unchanged files are skipped, so `otzar index -r ~/notes`
-  is safe to re-run. `server watch` does exactly that on an interval, reconciling
-  new, changed, and deleted files without loading the model.
+  is safe to re-run. `otzar index --now` re-scans every tree you've indexed —
+  picking up what's new, changed, or deleted — and `server watch` does the same
+  thing on an interval, without loading the model when nothing changed.
 - `--mode` picks the retriever; `--ext`, `--path`, and `--after` filter any mode.
 - `-j/--json` on any command gives machine-readable output — for `query`, that
   includes the hybrid score breakdown.

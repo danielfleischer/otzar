@@ -71,6 +71,26 @@ func TestProgressBarMultiLine(t *testing.T) {
 	}
 }
 
+// `index --now` streams the recursive and non-recursive roots as two runs, so the
+// bar sees a second `start` and a `file` count that restarts at 1. Totals have to
+// accumulate across both, or the footer walks backwards mid-scan.
+func TestProgressBarAccumulatesAcrossRuns(t *testing.T) {
+	var buf bytes.Buffer
+	p := newProgressBar(&buf, true)
+
+	p.update(api.IndexEvent{Type: "start", Total: 2}) // recursive roots
+	p.update(api.IndexEvent{Type: "file", Done: 1, Path: "/x/a.md"})
+	p.update(api.IndexEvent{Type: "file", Done: 2, Path: "/x/b.md"})
+
+	buf.Reset()
+	p.update(api.IndexEvent{Type: "start", Total: 3}) // non-recursive roots
+	p.update(api.IndexEvent{Type: "file", Done: 1, Path: "/y/c.md"})
+
+	if tail := lastBlock(buf.String()); !strings.Contains(tail, "files 3/5") {
+		t.Fatalf("second run should continue from the first (want files 3/5): %q", tail)
+	}
+}
+
 // lastBlock returns the final redraw frame (everything after the last cursor-up).
 func lastBlock(s string) string {
 	if i := strings.LastIndex(s, "\033["); i >= 0 {

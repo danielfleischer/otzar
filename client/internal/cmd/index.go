@@ -18,15 +18,39 @@ var (
 	indexRecursive bool
 	indexJSON      bool
 	indexForce     bool
+	indexNow       bool
 )
 
 var indexCmd = &cobra.Command{
-	Use:   "index <path>...",
+	Use:   "index [path]... | --now",
 	Short: "Index files or folders into the search index",
 	Long: `Walk the given files and folders, extract text, chunk it, and add the
-chunks to the local index. Directories are only descended with --recursive.`,
-	Args: cobra.MinimumNArgs(1),
+chunks to the local index. Directories are only descended with --recursive.
+
+With --now and no paths, re-scan everything already indexed: otzar re-runs the
+index over the trees you named before, picking up files that are new, changed, or
+deleted since. That is the sweep 'otzar server watch' does on a timer, on demand.
+Each tree keeps the --recursive setting it was indexed with.`,
+	Args: cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if indexNow && len(args) > 0 {
+			return fmt.Errorf("--now re-scans what is already indexed, so it takes no paths")
+		}
+		if !indexNow && len(args) == 0 {
+			return fmt.Errorf("name at least one path to index, or pass --now to re-scan what already is")
+		}
+
+		// No total budget to set: IndexStream is bounded by silence, not duration,
+		// so a run of any length is fine as long as the server keeps talking.
+		c, err := client()
+		if err != nil {
+			return err
+		}
+
+		if indexNow {
+			return indexKnownRoots(c)
+		}
+
 		// The server runs in its own working directory, so send absolute paths.
 		paths := make([]string, 0, len(args))
 		for _, a := range args {
@@ -35,13 +59,6 @@ chunks to the local index. Directories are only descended with --recursive.`,
 				return err
 			}
 			paths = append(paths, abs)
-		}
-
-		// No total budget to set: IndexStream is bounded by silence, not duration,
-		// so a run of any length is fine as long as the server keeps talking.
-		c, err := client()
-		if err != nil {
-			return err
 		}
 
 		// Show a live multi-line block on an interactive terminal; stay quiet when
@@ -75,6 +92,96 @@ chunks to the local index. Directories are only descended with --recursive.`,
 	},
 }
 
+// indexKnownRoots is `otzar index --now`: fetch the trees already indexed and
+// post them straight back to /index. The reconciliation is the server's ordinary
+// incremental index — unchanged files cost a stat, changed ones re-embed — so
+// this needs no endpoint of its own, exactly like `otzar admin reindex` composing
+// /paths with /index.
+//
+// Deleted files are the one thing an index run can't notice (it walks what is
+// there, not what is missing), so this prunes first — but only when every root is
+// still on disk. A vanished root (an unmounted volume) makes its whole subtree
+// look orphaned, and dropping it would be a mass deletion the user never asked
+// for. That's the same guard the server-side watch sweep applies.
+func indexKnownRoots(c *api.Client) error {
+	roots, err := c.Roots()
+	if err != nil {
+		return err
+	}
+	if len(roots.Roots) == 0 {
+		fmt.Println("nothing indexed yet — name a tree first, e.g. `otzar index -r ~/notes`")
+		return nil
+	}
+
+	var recursive, flat []string
+	missing := 0
+	for _, r := range roots.Roots {
+		if _, err := os.Stat(r.Path); err != nil {
+			missing++
+			continue
+		}
+		if r.Recursive {
+			recursive = append(recursive, r.Path)
+		} else {
+			flat = append(flat, r.Path)
+		}
+	}
+
+	pruned := 0
+	if missing == 0 {
+		p, err := c.Prune(false)
+		if err != nil {
+			return err
+		}
+		pruned = len(p.Removed)
+	}
+
+	// One stream per recursive flag; the bar accumulates across both.
+	bar := newProgressBar(os.Stderr, !indexJSON && isTerminal(os.Stderr))
+	total := api.IndexResult{}
+	for _, run := range []struct {
+		paths     []string
+		recursive bool
+	}{{recursive, true}, {flat, false}} {
+		if len(run.paths) == 0 {
+			continue
+		}
+		res, err := c.IndexStream(api.IndexRequest{Paths: run.paths, Recursive: run.recursive, Force: indexForce}, bar.update)
+		if err != nil {
+			bar.finish()
+			return err
+		}
+		total.Indexed += res.Indexed
+		total.Chunks += res.Chunks
+		total.Unchanged += res.Unchanged
+		total.Skipped += res.Skipped
+		total.Errors = append(total.Errors, res.Errors...)
+		total.Cancelled = total.Cancelled || res.Cancelled
+	}
+	bar.finish()
+
+	if indexJSON {
+		return render.JSON(total)
+	}
+	kv := [][2]string{
+		{"roots", fmt.Sprintf("%d", len(roots.Roots))},
+		{"indexed", fmt.Sprintf("%d files", total.Indexed)},
+		{"chunks", fmt.Sprintf("%d", total.Chunks)},
+		{"unchanged", fmt.Sprintf("%d files", total.Unchanged)},
+		{"skipped", fmt.Sprintf("%d files", total.Skipped)},
+		{"pruned", fmt.Sprintf("%d gone from disk", pruned)},
+		{"errors", fmt.Sprintf("%d", len(total.Errors))},
+	}
+	render.KV(kv)
+	if missing > 0 {
+		fmt.Printf("  ! %d root(s) not on disk — skipped, and nothing was pruned this run\n", missing)
+	}
+	for _, e := range total.Errors {
+		fmt.Printf("  ! %s: %s\n", e.Path, e.Error)
+	}
+	return nil
+}
+
 // fileProg is one in-flight file's chunk progress.
 type fileProg struct {
 	name  string
@@ -97,6 +204,7 @@ type progressBar struct {
 	enabled    bool
 	totalFiles int
 	doneFiles  int
+	baseFiles  int // files finished in earlier runs (`--now` streams up to two)
 	doneChunks int // chunks from files that already finished (footer accumulator)
 	active     []string
 	byPath     map[string]*fileProg
@@ -115,7 +223,11 @@ func (p *progressBar) update(ev api.IndexEvent) {
 	}
 	switch ev.Type {
 	case "start":
-		p.totalFiles = ev.Total
+		// `index --now` streams the recursive and non-recursive roots as two runs,
+		// so `start` can arrive twice with its own total and a file count that
+		// restarts at 1. Accumulate, or the footer walks backwards mid-scan.
+		p.totalFiles += ev.Total
+		p.baseFiles = p.doneFiles
 	case "file-start":
 		if _, ok := p.byPath[ev.Path]; !ok {
 			p.active = append(p.active, ev.Path)
@@ -126,7 +238,7 @@ func (p *progressBar) update(ev api.IndexEvent) {
 			fp.done, fp.total = ev.Done, ev.Total
 		}
 	case "file":
-		p.doneFiles = ev.Done
+		p.doneFiles = p.baseFiles + ev.Done
 		if fp := p.byPath[ev.Path]; fp != nil { // nil for unchanged/skipped (never embedded)
 			p.doneChunks += fp.done
 			delete(p.byPath, ev.Path)
@@ -254,4 +366,6 @@ func init() {
 	indexCmd.Flags().BoolVarP(&indexJSON, "json", "j", false, "emit raw JSON")
 	indexCmd.Flags().BoolVarP(&indexForce, "force", "f", false,
 		"re-embed every file even if unchanged (needed after a chunker or schema change)")
+	indexCmd.Flags().BoolVar(&indexNow, "now", false,
+		"re-scan everything already indexed, instead of naming paths")
 }

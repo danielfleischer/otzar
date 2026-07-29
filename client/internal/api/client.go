@@ -175,6 +175,16 @@ func (c *Client) Stats() (*Stats, error) {
 	return &s, nil
 }
 
+// Roots fetches GET /roots: the trees that have been indexed, each with the
+// recursive flag it was indexed with. Post them back to /index to re-scan them.
+func (c *Client) Roots() (*RootsResult, error) {
+	var r RootsResult
+	if err := c.getJSON("/roots", &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
 // stallReader restarts a watchdog on every byte that arrives, so a stream is
 // judged on whether it is *moving* rather than on how long it has been running.
 // Reads, not lines, are what reset it: during one large file the server emits a

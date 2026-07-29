@@ -11,6 +11,7 @@ Status legend: ✅ implemented · ⬜ planned (milestone in parens).
 | GET    | `/health`       | ✅     | `{status, uptime_s}`                                                                                                                   |
 | GET    | `/stats`        | ✅     | `{num_docs, num_chunks}`                                                                                                               |
 | GET    | `/paths`        | ✅     | `{count, paths}` — distinct indexed source files (`otzar list`, MCP `list_indexed_paths`)                                              |
+| GET    | `/roots`        | ✅     | `{roots: [{path, recursive}]}` — the trees asked for, as recorded in `roots.edn` (`otzar index --now` posts them back to `/index`)     |
 | POST   | `/shutdown`     | ✅     | `{ok: true}`, then the process exits                                                                                                   |
 | POST   | `/index`        | ✅     | `{paths, recursive}` → `{indexed, ...}`; incremental — re-run to skip unchanged files and replace changed ones                         |
 | POST   | `/query`        | ✅     | `{q, k, mode, filters, fusion}` → `{hits}`; `mode` hybrid (default)/keyword/vector                                                     |
@@ -49,6 +50,23 @@ POST /shutdown  200  {"ok": true}
 `/paths` lists the distinct absolute source-file paths currently indexed, sorted.
 It backs the MCP `list_indexed_paths` tool ("do you have access to X?"). Like
 `/stats`, it reports an empty set rather than an error before anything is indexed.
+
+### GET /roots
+
+```
+GET /roots  200  {"roots": [{"path": "/notes", "recursive": true},
+                            {"path": "/a.md", "recursive": false}]}
+```
+
+The trees `POST /index` was asked to index, read back from `roots.edn` — an
+*intent* ("index ~/notes recursively"), where `/paths` is the outcome. Empty
+before anything has been indexed.
+
+It exists so the client can re-run an index over what is already known:
+`otzar index --now` fetches these, prunes, and posts them back to `POST /index`,
+grouped by their `recursive` flag — the same composition `otzar admin reindex`
+does with `/paths`. The background sweep (`GET /watch`) reads the same file
+server-side, so the two agree on what "everything" means without a shared route.
 
 ### POST /index
 

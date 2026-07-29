@@ -1,6 +1,7 @@
 (ns rag.http
-  "Ring/reitit handlers: /health, /stats, /paths, /index (POST add, DELETE clear),
-  /prune, /query, /document/:id, /watch (GET status, POST toggle), /shutdown.
+  "Ring/reitit handlers: /health, /stats, /paths, /roots, /index (POST add,
+  DELETE clear), /prune, /query, /document/:id, /watch (GET status, POST toggle),
+  /shutdown.
   Deletion verbs: /prune drops chunks for source files gone from disk; DELETE /index
   wipes the whole index. /reindex remains unscheduled (docs/api.md)."
   (:require [reitit.ring :as ring]
@@ -50,6 +51,18 @@
 
 (defn- paths [_]
   (json 200 (index/paths)))
+
+(defn- roots-handler
+  "GET /roots — the trees the user has asked to index (rag.roots), each with the
+  recursive flag it was indexed with: {\"roots\": [{\"path\", \"recursive\"}]}. Not the
+  same list as /paths, which is the files that actually made it into the index.
+
+  This is what lets the client re-run an index over what is already known —
+  `otzar index --now` fetches these and posts them back to /index, the same way
+  `otzar admin reindex` composes /paths with /index. The background watch sweep
+  reads the same file server-side."
+  [_]
+  (json 200 {:roots (roots/read-roots)}))
 
 (def ^:private heartbeat-secs
   "How often, in seconds, to poke the response socket while indexing so we notice
@@ -177,6 +190,7 @@
     [["/health"   {:get  health}]
      ["/stats"    {:get  (with-errors stats)}]
      ["/paths"    {:get  (with-errors paths)}]
+     ["/roots"    {:get  (with-errors roots-handler)}]
      ["/index"    {:post   (with-errors index-handler)
                    :delete (with-errors clear-handler)}]
      ["/prune"    {:post (with-errors prune-handler)}]

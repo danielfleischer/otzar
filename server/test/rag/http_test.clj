@@ -8,7 +8,8 @@
             [ring.core.protocols :as rcp]
             [rag.config :as config]
             [rag.http :as http]
-            [rag.index :as index]))
+            [rag.index :as index]
+            [rag.roots :as roots]))
 
 (def ^:private mapper (j/object-mapper {:decode-key-fn keyword}))
 
@@ -54,6 +55,16 @@
     (let [resp (call (req :get "/paths"))]
       (is (= 200 (:status resp)))
       (is (= {:count 1 :paths ["/a.md"]} (json-body resp))))))
+
+(deftest roots-lists-the-indexed-trees
+  (testing "GET /roots reports each tree with the recursive flag it was indexed with"
+    (with-redefs [roots/read-roots (constantly [{:path "/notes" :recursive true}
+                                                {:path "/a.md" :recursive false}])]
+      (let [resp (call (req :get "/roots"))]
+        (is (= 200 (:status resp)))
+        (is (= {:roots [{:path "/notes" :recursive true}
+                        {:path "/a.md" :recursive false}]}
+               (json-body resp)))))))
 
 (deftest query-requires-non-blank-q
   (testing "blank q is rejected before touching the index"

@@ -15,6 +15,18 @@ type Stats struct {
 	NumChunks int `json:"num_chunks"`
 }
 
+// RootsResult is the body of GET /roots: the trees asked for, not the files that
+// landed in the index (that's Paths). Recursive is the flag each was indexed with.
+type RootsResult struct {
+	Roots []Root `json:"roots"`
+}
+
+// Root is one indexed tree — an absolute path plus whether it was descended into.
+type Root struct {
+	Path      string `json:"path"`
+	Recursive bool   `json:"recursive"`
+}
+
 // IndexRequest is the body of POST /index.
 type IndexRequest struct {
 	Paths     []string `json:"paths"`
