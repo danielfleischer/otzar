@@ -62,9 +62,9 @@ linter to install, and CI runs this same target — the server side's equivalent
 - Keep changes scoped to what you're touching.
 - Server code lives under `rag.*` namespaces regardless of the `otzar` binary
   name; don't rename namespaces to match.
-- `docs/rag-project-plan.md` is the original design doc (kept for history);
-  `docs/api.md` is the current, accurate HTTP contract — update `api.md` when
-  you change a route.
+- `docs/design.md` describes the design and the reasoning behind it;
+  `docs/api.md` is the HTTP contract — update `api.md` when you change a route,
+  and `design.md` when you change a decision it explains.
 
 ## Before opening a PR
 

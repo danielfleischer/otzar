@@ -11,7 +11,7 @@ holds the index; a Go/Cobra CLI controls its lifecycle and is the primary UX. Th
 same Go binary also speaks MCP (`otzar mcp`) so LLM hosts can search the index as
 a tool.
 
-See [`docs/rag-project-plan.md`](docs/rag-project-plan.md) for the full design and
+See [`docs/design.md`](docs/design.md) for the full design and
 [`docs/api.md`](docs/api.md) for the HTTP contract.
 
 *otzar* (אוֹצָר) is Hebrew for **treasure** — and, fittingly, *thesaurus*.
@@ -240,7 +240,7 @@ Run `otzar completion --help` for the other shells.
 ```
 server/   Clojure server (JVM): HTTP API, Lucene index, indexing pipeline
 client/   Go + Cobra CLI: lifecycle, HTTP client, MCP adapter, rendering
-docs/     Shared HTTP contract and project plan
+docs/     Shared HTTP contract and design notes
 ```
 
 ## License

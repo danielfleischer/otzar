@@ -10,7 +10,7 @@
 
 (def ^:const rrf-k
   "RRF damping constant. Larger values flatten the contribution of top ranks
-  (project plan §6 uses 60). Tune here."
+  (the canonical value is 60; see design §6). Tune here."
   40)
 
 (def ^:const vector-weight
@@ -47,7 +47,7 @@
 
     Ties on the fused score may be broken arbitrarily (stable is nice).
 
-  See docs/rag-project-plan.md §6 for the design rationale."
+  See docs/design.md §6 for the design rationale."
   [keyword-hits vector-hits k]
   (let [collect (fn [search-type weight {:as item :keys [id score]} idx]
                   (let [body (merge item {:score_breakdown (merge {:keyword nil :vector nil} {search-type score})

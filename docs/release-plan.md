@@ -19,7 +19,7 @@ the source of truth — leave it as-is.
 
 ## 1. Documentation consistency
 
-- [x] **Reconcile `rag-project-plan.md` §8 layout with the real tree.** The plan
+- [x] **Reconcile `design.md` §8 layout with the real tree.** The plan
       lists files that don't exist: `store.clj`, `embed/{protocol,ollama,djl}.clj`,
       `query/{vector,keyword}.clj`, `rm.go`, `resources/opennlp/en-sent.bin`.
       Actual tree is flatter: single `embed.clj`, `index.clj`, only
@@ -33,17 +33,31 @@ the source of truth — leave it as-is.
       `config.clj` is `bge-m3` (1024-dim), and the code is internally consistent
       about that. Update the docs — and confirm which model you actually intend to
       ship as the default.
-- [ ] **Clean up the project plan and call it `design.md`.** `rag-project-plan.md`
-      is currently framed as a record of how the project got designed rather than
-      what it was designed to be: "the shape we agreed on", the first-person plural
-      throughout, the `Resolved:` annotations, "the first draft of this section
-      said X" (§13.7), and the opening "this document is the starting point —
-      decisions can change". Flatten all of that into present tense describing the
-      current design, and rename the file `docs/design.md`. The rationale and the
-      rejected alternatives are the valuable part and should stay — they're what
-      makes the Lucene/BreakIterator/Go choices legible to a reader. Inbound links
-      to fix: `README.md`, `CONTRIBUTING.md` (which also calls it "the original
-      design doc (kept for history)" — no longer the framing), and §1 above.
+- [x] **Clean up the project plan and call it `design.md`.** `git mv`'d to
+      `docs/design.md` and rewritten in present tense: no "the shape we agreed on",
+      no first-person plural, no `Resolved:` annotations, no "the first draft of
+      this section said X". All the rationale and every rejected alternative stayed
+      — they're what makes the Lucene/BreakIterator/Go choices legible.
+      Section *numbers* were preserved, because code cites them (`§3.4`, `§3.6`,
+      `§4.1`, `§6`, `§13.x`); the two docstrings that cited the file *by path*
+      (`lucene.clj`, `hybrid.clj`) now point at `design.md`. Two sections were
+      repurposed rather than deleted, to keep §13 where it is: the M0–M8 milestone
+      ladder became **§10 Extraction — the format registry** (the registry, the
+      locator unit per format, the HTML line-fidelity and docx paragraph
+      constraints, the known gaps), and "open questions to resolve before M0"
+      became **§11 Operational decisions** (single index, Ollama assumed not
+      managed, the writer/searcher/single-flight concurrency story, durability).
+      Stale facts found while flattening and corrected against the code: the
+      chunker packs 6-sentence windows with 2 of context (not 3/1), RRF uses
+      `rrf-k` 40 with a 1.3 vector weight (not an unweighted 60 — `hybrid.clj`'s
+      "plan §6 uses 60" comment was contradicting itself), §4.2's sqlite/JSON
+      side-table doesn't exist (per-file reindex metadata rides as stored fields;
+      `roots.edn`/`watch.edn` hold the rest), §5's route table gained
+      `/paths`, `/prune`, `/watch` and lost the never-built `/reindex`, §7 gained
+      `restart`/`watch`/`list`/`--version` and the auto-start rule, and §8's tree
+      and §9's deps gained what's actually there (roots, watch, the three
+      extractors, PDFBox, slf4j-nop). Inbound links fixed: `README.md`,
+      `CONTRIBUTING.md`, and §1 above.
 
 ## 2. Repo hygiene for OSS
 
