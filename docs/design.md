@@ -371,8 +371,7 @@ otzar/
 ├── .github/workflows/              # ci.yml (build+test both sides), release.yml (v* tags)
 ├── docs/
 │   ├── api.md                      # HTTP contract — shared source of truth
-│   ├── design.md                   # this document
-│   └── release-plan.md             # open-source release checklist
+│   └── design.md                   # this document
 ├── server/                         # Clojure server, JVM
 │   ├── deps.edn
 │   ├── build.clj                   # tools.build uberjar -> target/otzar-server.jar
@@ -523,7 +522,25 @@ windows-1255 or latin-1 page lands as junk text rather than an error; `.doc`,
 - Schema versioning with automatic reindex on a bump; today a schema change is a
   manual clear + reindex, with the dimension case detected up front (§4.3).
 - Tags: the field is reserved (§4.1), but nothing populates or filters on it.
-- In-process embeddings (§3.4), and Windows support.
+- In-process embeddings (§3.4).
+- **Windows.** The server half is already portable — the jar runs anywhere with a
+  JDK, and Ollama ships a Windows build — except for `Files/setPosixFilePermissions`
+  in `rag.config`, which throws on NTFS and needs a guard. The client half doesn't
+  compile at all: `GOOS=windows` fails on the four Unix primitives `lifecycle` is
+  built from — `syscall.Kill` (liveness), `Flock` (the start lock), `Setpgid`
+  (detaching the server), and `SIGTERM` (the stop fallback). Each has an
+  `x/sys/windows` equivalent (`OpenProcess`, `LockFileEx`,
+  `CREATE_NEW_PROCESS_GROUP`, `TerminateProcess`) — already an indirect dependency
+  — behind a `lifecycle_unix.go`/`lifecycle_windows.go` build-tag split, call it
+  ~100 lines. Then `%LOCALAPPDATA%` in `jarCandidates`, `java.exe` in
+  `resolveJava`, and `.zip` release assets. Deferred for the verification rather
+  than the code: what the locking guards (concurrent cold `otzar mcp` launches
+  racing to boot one server) only misbehaves in practice, so a `windows-latest` CI
+  job should come first.
+
+Untested rather than deferred: the Linux release assets are cross-compiled but
+have never been run, and the "no JDK anywhere" error path (§7) is only exercised
+by its unit test. Both fail loudly if they fail at all.
 
 ## 13. MCP server (`otzar mcp`)
 

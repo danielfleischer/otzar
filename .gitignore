@@ -18,4 +18,7 @@ client/otzar
 
 # Emacs backup files
 *.~[0-9]*~
+
+# Local scratchpads: personal task lists, not part of the published project.
 todo.org
+docs/release-plan.md
