@@ -201,3 +201,66 @@ func TestStartLockMutualExclusion(t *testing.T) {
 	}
 	unlock2()
 }
+
+func TestPidRecordRejectsReusedAndLegacyPIDs(t *testing.T) {
+	oldIdentity := processIdentity
+	processIdentity = func(pid int) (string, error) {
+		if pid != 42 {
+			t.Fatalf("processIdentity called with pid %d, want 42", pid)
+		}
+		return "new process start", nil
+	}
+	t.Cleanup(func() { processIdentity = oldIdentity })
+
+	if ownedProcess(pidRecord{PID: 42, Started: "old process start"}) {
+		t.Fatal("a recycled pid with a different start identity must not be owned")
+	}
+	if !ownedProcess(pidRecord{PID: 42, Started: "new process start"}) {
+		t.Fatal("the recorded pid and matching start identity should be owned")
+	}
+	if ownedProcess(pidRecord{PID: 42}) {
+		t.Fatal("a legacy bare pid has no ownership proof and must not be signalled")
+	}
+}
+
+func TestReadPidRecordAcceptsLegacyPID(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := os.MkdirAll(dir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(PidFile(), []byte("42\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	record, err := readPidRecord()
+	if err != nil {
+		t.Fatalf("readPidRecord: %v", err)
+	}
+	if record.PID != 42 || record.Started != "" {
+		t.Fatalf("legacy record = %#v, want pid 42 with no start identity", record)
+	}
+}
+
+func TestWritePidRecordCapturesProcessIdentity(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := os.MkdirAll(dir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	oldIdentity := processIdentity
+	processIdentity = func(pid int) (string, error) { return "captured process start", nil }
+	t.Cleanup(func() { processIdentity = oldIdentity })
+
+	if err := writePidRecord(os.Getpid()); err != nil {
+		t.Fatalf("writePidRecord: %v", err)
+	}
+	record, err := readPidRecord()
+	if err != nil {
+		t.Fatalf("readPidRecord: %v", err)
+	}
+	if record.PID != os.Getpid() || record.Started == "" {
+		t.Fatalf("record = %#v, want current pid and a start identity", record)
+	}
+	if !ownedProcess(record) {
+		t.Fatal("a freshly recorded current process should verify as owned")
+	}
+}

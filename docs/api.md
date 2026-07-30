@@ -27,8 +27,9 @@ Status legend: ✅ implemented · ⬜ planned (milestone in parens).
 - `server.port` — written by the **server** on boot (it binds an ephemeral port
   and records the actual one). Removed on clean shutdown. Its presence +
   a passing `/health` is how the client decides the server is up.
-- `server.pid` — written by the **client** when it spawns the server; used to
-  signal the process if `/shutdown` is unavailable.
+- `server.pid` — written by the **client** when it spawns the server; records the
+  PID and its OS start identity so the client can verify ownership before using
+  it to signal the process if `/shutdown` is unavailable.
 - `server.log` — server stdout/stderr, written by the client's `start`.
 - `roots.edn` — the paths `POST /index` was asked to index (`{:roots [{:path
   :recursive}]}`), written by the **server**. The Lucene index stores per-file

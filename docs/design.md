@@ -335,8 +335,9 @@ otzar --version                      # stamped from `git describe` at build time
 ```
 
 - The server binds an ephemeral loopback-only port and writes it to
-  `~/.otzar/server.port` on boot; the client writes `server.pid` when it spawns
-  the process, and `server.log` catches its output.
+  `~/.otzar/server.port` on boot; `server.log` catches its output.
+- The client writes the PID plus its process-start identity to `server.pid` when
+  it spawns the process and verifies both before sending any fallback signal.
 - **Verbs that talk to the index auto-start the server; verbs that talk to the
   server process don't.** `index`, `query`, `list`, `admin *`, and `otzar mcp` boot
   it if it isn't running, announcing that on stderr so piped stdout stays clean.

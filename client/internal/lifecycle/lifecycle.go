@@ -3,11 +3,13 @@
 //
 // Contract with the server (see server/src/rag/config.clj): the server picks a
 // free port and writes ~/.otzar/server.port; this client writes the child PID
-// to ~/.otzar/server.pid. The port file is the source of truth for "where is
-// the server"; the pid file is how we signal it if /shutdown is unavailable.
+// and process-start identity to ~/.otzar/server.pid. The port file is the source
+// of truth for "where is the server"; the pid record is how we safely signal it
+// if /shutdown is unavailable.
 package lifecycle
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -49,12 +51,29 @@ func BaseURL() (string, error) {
 	return fmt.Sprintf("http://127.0.0.1:%d", p), nil
 }
 
-func readPid() (int, error) {
+type pidRecord struct {
+	PID     int    `json:"pid"`
+	Started string `json:"started"`
+}
+
+func readPidRecord() (pidRecord, error) {
 	b, err := os.ReadFile(PidFile())
 	if err != nil {
-		return 0, err
+		return pidRecord{}, err
 	}
-	return strconv.Atoi(strings.TrimSpace(string(b)))
+	var record pidRecord
+	if err := json.Unmarshal(b, &record); err == nil && record.PID > 0 {
+		return record, nil
+	}
+
+	// Compatibility with releases that wrote only the integer PID. It is useful
+	// for observing that the process still exists, but not sufficient proof that
+	// a recycled PID still belongs to otzar, so ownedProcess rejects it.
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil {
+		return pidRecord{}, err
+	}
+	return pidRecord{PID: pid}, nil
 }
 
 // IsHealthy reports whether the server answers /health on its published port.
@@ -78,6 +97,45 @@ func processAlive(pid int) bool {
 	}
 	// On Unix, signal 0 probes for existence without affecting the process.
 	return syscall.Kill(pid, 0) == nil
+}
+
+// processIdentity returns the OS-recorded start time for pid. PID values can be
+// recycled after a crash; the pair (pid, start identity) lets Stop distinguish
+// the child Start actually spawned from an unrelated process that later received
+// the same integer PID. `ps -o lstart` is available on the supported Unix hosts.
+var processIdentity = func(pid int) (string, error) {
+	if pid <= 0 {
+		return "", errors.New("invalid pid")
+	}
+	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "lstart=").Output()
+	if err != nil {
+		return "", err
+	}
+	identity := strings.TrimSpace(string(out))
+	if identity == "" {
+		return "", errors.New("process has no start identity")
+	}
+	return identity, nil
+}
+
+func ownedProcess(record pidRecord) bool {
+	if record.PID <= 0 || record.Started == "" {
+		return false
+	}
+	current, err := processIdentity(record.PID)
+	return err == nil && current == record.Started
+}
+
+func writePidRecord(pid int) error {
+	started, err := processIdentity(pid)
+	if err != nil {
+		return fmt.Errorf("identifying server process %d: %w", pid, err)
+	}
+	b, err := json.Marshal(pidRecord{PID: pid, Started: started})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(PidFile(), b, 0o600)
 }
 
 // serverDir is the absolute path to the Clojure server dir, baked in at build
@@ -334,7 +392,9 @@ func Start(timeout time.Duration) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("spawning server: %w", err)
 	}
-	if err := os.WriteFile(PidFile(), []byte(strconv.Itoa(cmd.Process.Pid)), 0o644); err != nil {
+	if err := writePidRecord(cmd.Process.Pid); err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
 		return err
 	}
 
@@ -367,10 +427,19 @@ func Start(timeout time.Duration) error {
 func Stop(timeout time.Duration) error {
 	base, err := BaseURL()
 	running := err == nil && IsHealthy()
-	pid, pidErr := readPid()
+	record, pidErr := readPidRecord()
 
 	if !running && pidErr != nil {
 		return errors.New("server is not running")
+	}
+	if !running && !processAlive(record.PID) {
+		cleanup()
+		return nil
+	}
+	if !running && !ownedProcess(record) {
+		return fmt.Errorf("refusing to signal pid %d because it cannot be verified as the "+
+			"otzar server; remove the stale file %s if that process is unrelated",
+			record.PID, PidFile())
 	}
 
 	if running {
@@ -382,7 +451,7 @@ func Stop(timeout time.Duration) error {
 
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if !IsHealthy() && (pidErr != nil || !processAlive(pid)) {
+		if !IsHealthy() {
 			cleanup()
 			return nil
 		}
@@ -390,10 +459,21 @@ func Stop(timeout time.Duration) error {
 	}
 
 	// Graceful path timed out — escalate.
-	if pidErr == nil && processAlive(pid) {
-		_ = syscall.Kill(pid, syscall.SIGTERM)
-		time.Sleep(500 * time.Millisecond)
+	if pidErr != nil {
+		return fmt.Errorf("server did not stop gracefully and its pid file is unavailable: %w", pidErr)
 	}
+	if !processAlive(record.PID) {
+		cleanup()
+		return nil
+	}
+	if !ownedProcess(record) {
+		return fmt.Errorf("refusing to signal pid %d because it no longer matches the "+
+			"otzar server process that was started", record.PID)
+	}
+	if err := syscall.Kill(record.PID, syscall.SIGTERM); err != nil {
+		return fmt.Errorf("stopping server pid %d: %w", record.PID, err)
+	}
+	time.Sleep(500 * time.Millisecond)
 	cleanup()
 	return nil
 }
