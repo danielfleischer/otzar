@@ -12,14 +12,13 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"otzar/internal/api"
+	"otzar/internal/buildinfo"
 )
-
-const version = "0.1.0"
 
 // NewServer builds the MCP server with the three read-only tools, each proxying
 // to the otzar HTTP server via c.
 func NewServer(c *api.Client) *mcpsdk.Server {
-	s := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "otzar", Version: version}, nil)
+	s := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "otzar", Version: buildinfo.Version}, nil)
 	addSearch(s, c)
 	addGetDocument(s, c)
 	addListIndexedPaths(s, c)

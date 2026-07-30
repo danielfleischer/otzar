@@ -14,6 +14,7 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"otzar/internal/api"
+	"otzar/internal/buildinfo"
 	"otzar/internal/mcp"
 )
 
@@ -111,7 +112,12 @@ func resultText(t *testing.T, res *mcpsdk.CallToolResult) string {
 
 func TestListTools(t *testing.T) {
 	ctx := context.Background()
-	session := connect(t, ctx, clientFor(t, stubServer(t)))
+	// Listing tools and negotiating server metadata never call the HTTP backend.
+	session := connect(t, ctx, &api.Client{})
+
+	if got := session.InitializeResult().ServerInfo.Version; got != buildinfo.Version {
+		t.Fatalf("MCP server version = %q, want shared build version %q", got, buildinfo.Version)
+	}
 
 	res, err := session.ListTools(ctx, nil)
 	if err != nil {

@@ -10,13 +10,13 @@ JAR = server/target/otzar-server.jar
 build: client ## Build the Go client into bin/otzar
 
 client: ## Compile the Go CLI
-	go build -C client -ldflags "-X 'otzar/internal/lifecycle.serverDir=$(CURDIR)/server' -X 'otzar/internal/cmd.version=$(VERSION)'" -o ../bin/otzar .
+	go build -C client -ldflags "-X 'otzar/internal/lifecycle.serverDir=$(CURDIR)/server' -X 'otzar/internal/buildinfo.Version=$(VERSION)'" -o ../bin/otzar .
 
 # Release build: no baked-in checkout path, so the installed client looks for the
 # packaged jar rather than the source tree it happened to be built from. This is
 # what the release workflow ships.
 client-release: ## Compile the Go CLI without a baked-in server checkout
-	go build -C client -ldflags "-X 'otzar/internal/cmd.version=$(VERSION)'" -o ../bin/otzar .
+	go build -C client -ldflags "-X 'otzar/internal/buildinfo.Version=$(VERSION)'" -o ../bin/otzar .
 
 uber: ## Package the server as one self-contained jar (server/target/otzar-server.jar)
 	cd server && clojure -T:build uber

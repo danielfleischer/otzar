@@ -5,16 +5,13 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-)
 
-// version is stamped in at build time via -ldflags (-X
-// otzar/internal/cmd.version=...); see the Makefile. A plain `go build` reports
-// "dev".
-var version = "dev"
+	"otzar/internal/buildinfo"
+)
 
 var rootCmd = &cobra.Command{
 	Use:     "otzar",
-	Version: version,
+	Version: buildinfo.Version,
 	Short:   "Hybrid local document search (vector + keyword + metadata)",
 	Long: `otzar is the CLI for a personal hybrid retrieval system.
 
