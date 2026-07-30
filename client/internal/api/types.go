@@ -3,10 +3,14 @@
 // Clojure handlers in server/src/rag/http.clj.
 package api
 
-// Health is the body of GET /health.
+// Health is the body of GET /health. Version is the server build's own version
+// and Source is where that server was booted from; both are empty when talking
+// to a server too old to report them.
 type Health struct {
 	Status  string  `json:"status"`
 	UptimeS float64 `json:"uptime_s"`
+	Version string  `json:"version"`
+	Source  string  `json:"source"`
 }
 
 // Stats is the body of GET /stats.

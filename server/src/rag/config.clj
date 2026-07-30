@@ -1,10 +1,58 @@
 (ns rag.config
   "Runtime paths shared with the Go client. The contract: the server owns the
   port file (it picks a free port and writes the actual one); the client owns
-  the pid file. Both live under ~/.otzar/."
-  (:require [clojure.java.io :as io])
-  (:import [java.nio.file Files]
+  the pid file. Both live under ~/.otzar/. Also the two facts about this
+  process that only it can report: its version and where it was booted from."
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str])
+  (:import [java.io File]
+           [java.nio.file Files]
            [java.nio.file.attribute PosixFilePermissions]))
+
+(def version
+  "This build's version, reported by GET /health.
+
+  build.clj stamps it into the jar from the same `git describe` the Makefile
+  stamps into the client binary. Running from source there is no resource to
+  read, so it is \"dev\" — the same word an unstamped `go build` client reports,
+  and the value both sides treat as \"don't compare versions\"."
+  (or (some-> (io/resource "otzar-version.txt") slurp str/trim not-empty) "dev"))
+
+(defn- classpath-entries []
+  (->> (str/split (or (System/getProperty "java.class.path") "")
+                  (re-pattern (java.util.regex.Pattern/quote File/pathSeparator)))
+       (remove str/blank?)))
+
+(defn source-of
+  "-> String
+  Where a process running with classpath `entries` was booted from.
+
+  The two boot shapes are distinguishable from the classpath alone: `java -jar`
+  puts the jar there and nothing else, while a source run leads with the
+  project's own directories (src, resources) ahead of its dependency jars. Paths
+  are absolutised because they arrive relative to the process's working
+  directory, and the client displays them from some other directory entirely."
+  [entries]
+  (let [jar? #(str/ends-with? % ".jar")
+        abs  #(.getAbsoluteFile (io/file %))]
+    (cond
+      (and (= 1 (count entries)) (jar? (first entries)))
+      (str (abs (first entries)))
+
+      ;; The source tree is the parent of the first classpath directory.
+      (seq (remove jar? entries))
+      (str (.getParent (abs (first (remove jar? entries)))) " (source)")
+
+      :else "unknown")))
+
+(def launch-source
+  "Where this process's code is actually running from, reported by GET /health.
+
+  The client can only *predict* this — `lifecycle.resolveServer` answers what it
+  would boot from the current directory, which stops matching reality the moment
+  anything (an upgrade, a stale daemon, a shell sitting in a checkout) puts the
+  two out of step. Only the running process knows, so it says."
+  (source-of (classpath-entries)))
 
 (def home-dir (System/getProperty "user.home"))
 (def otzar-dir (io/file home-dir ".otzar"))

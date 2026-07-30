@@ -18,8 +18,10 @@ client: ## Compile the Go CLI
 client-release: ## Compile the Go CLI without a baked-in server checkout
 	go build -C client -ldflags "-X 'otzar/internal/buildinfo.Version=$(VERSION)'" -o ../bin/otzar .
 
+# VERSION goes into the jar as well as the binary: GET /health reports it, and a
+# client warns when the server answering is not the one it shipped with.
 uber: ## Package the server as one self-contained jar (server/target/otzar-server.jar)
-	cd server && clojure -T:build uber
+	cd server && clojure -T:build uber :version '"$(VERSION)"'
 
 # The install a user gets from a release: client binary plus packaged server, no
 # checkout needed at runtime. The client finds the jar in DATA_DIR by itself (see

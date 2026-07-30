@@ -44,6 +44,21 @@
     (is (= 200 (:status resp)))
     (is (= "ok" (:status (json-body resp))))))
 
+(deftest health-reports-version
+  ;; The client compares this against its own build; running from source it is
+  ;; "dev", which is precisely the value that means "don't compare".
+  (let [body (json-body (call (req :get "/health")))]
+    (is (string? (:version body)))
+    (is (seq (:version body)))))
+
+(deftest health-reports-launch-source
+  ;; What `otzar server status` shows instead of its own guess. The test suite
+  ;; runs from the source tree, so that is what this must report — and it must
+  ;; be absolute, since the client displays it verbatim from another directory.
+  (let [source (:source (json-body (call (req :get "/health"))))]
+    (is (str/ends-with? source " (source)"))
+    (is (str/starts-with? source "/"))))
+
 (deftest stats-delegates-to-index
   (with-redefs [index/stats (constantly {:num_docs 3 :num_chunks 42})]
     (let [resp (call (req :get "/stats"))]

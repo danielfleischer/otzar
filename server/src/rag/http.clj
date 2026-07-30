@@ -8,6 +8,7 @@
             [ring.core.protocols :as rcp]
             [jsonista.core :as j]
             [clojure.string :as str]
+            [rag.config :as config]
             [rag.index :as index]
             [rag.roots :as roots]
             [rag.watch :as watch])
@@ -42,9 +43,20 @@
       (catch Throwable e
         (json 500 {:error (.getMessage e)})))))
 
-(defn- health [_]
+(defn- health
+  "GET /health — liveness, plus the two things only the server answering can say
+  about itself: its version and where it was booted from.
+
+  Both exist because the client's view of them is a guess. It compares that
+  version against its own and warns on a difference (upgrading the binary leaves
+  a running server untouched, so the pair drifts until someone restarts it), and
+  it shows this source in place of the jar-or-checkout it would boot itself. Old
+  clients ignore the extra keys."
+  [_]
   (json 200 {:status   "ok"
-             :uptime_s (/ (- (System/currentTimeMillis) start-ms) 1000.0)}))
+             :uptime_s (/ (- (System/currentTimeMillis) start-ms) 1000.0)
+             :version  config/version
+             :source   config/launch-source}))
 
 (defn- stats [_]
   (json 200 (index/stats)))

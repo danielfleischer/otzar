@@ -225,7 +225,7 @@ response shapes; the table below is the map.
 
 | Method | Path            | Purpose                                                |
 |--------|-----------------|--------------------------------------------------------|
-| GET    | `/health`       | `{status, uptime_s}` — also the client's liveness probe |
+| GET    | `/health`       | `{status, uptime_s, version, source}` — also the client's liveness probe |
 | GET    | `/stats`        | `{num_docs, num_chunks}`                                |
 | GET    | `/paths`        | `{count, paths}` — the distinct source files indexed    |
 | GET    | `/roots`        | `{roots}` — the trees asked for, with their recursive flag |
@@ -318,7 +318,7 @@ feel off.
 otzar server start                   # boot the server (background JVM process)
 otzar server stop                    # POST /shutdown, then verify exit
 otzar server restart                 # stop if running, then start — picks up server changes
-otzar server status                  # GET /health and /stats, plus which server it resolved
+otzar server status                  # GET /health and /stats: where the running server came from, its version vs. ours
 otzar server watch status            # armed? next sweep when? last sweep how?
 otzar server watch enable [--interval 30m] | disable
 otzar index <path>... [-r] [-f]      # POST /index; -r recursive, -f force re-embed

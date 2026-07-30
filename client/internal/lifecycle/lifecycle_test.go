@@ -2,6 +2,10 @@ package lifecycle
 
 import (
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -262,5 +266,73 @@ func TestWritePidRecordCapturesProcessIdentity(t *testing.T) {
 	}
 	if !ownedProcess(record) {
 		t.Fatal("a freshly recorded current process should verify as owned")
+	}
+}
+
+// stageHealth publishes a port file pointing at a /health that returns body,
+// the way a running server would.
+func stageHealth(t *testing.T, status int, body string) {
+	t.Helper()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, body)
+	}))
+	t.Cleanup(ts.Close)
+
+	u, err := url.Parse(ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(PortFile(), []byte(u.Port()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestProbe covers what the probe must survive. Liveness is the status code
+// alone: a server whose body we can't read or parse — an old one, a truncated
+// one — is still up, and reporting it as down would send the client off to boot
+// a second server on top of it.
+func TestProbe(t *testing.T) {
+	cases := []struct {
+		name        string
+		status      int
+		body        string
+		wantHealthy bool
+		wantVersion string
+	}{
+		{"current server", 200, `{"status":"ok","uptime_s":1.5,"version":"v1.0.1"}`, true, "v1.0.1"},
+		{"server without a version", 200, `{"status":"ok","uptime_s":1.5}`, true, ""},
+		{"empty body", 200, "", true, ""},
+		{"unparseable body", 200, "not json", true, ""},
+		{"error status", 500, `{"version":"v1.0.1"}`, false, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			stageHealth(t, tc.status, tc.body)
+
+			h, ok := Probe()
+			if ok != tc.wantHealthy {
+				t.Fatalf("Probe() healthy = %v, want %v", ok, tc.wantHealthy)
+			}
+			if h.Version != tc.wantVersion {
+				t.Errorf("Probe() version = %q, want %q", h.Version, tc.wantVersion)
+			}
+			if IsHealthy() != tc.wantHealthy {
+				t.Errorf("IsHealthy() disagrees with Probe()")
+			}
+		})
+	}
+}
+
+// TestProbeNoPortFile is the not-running case: no port file, no server, and no
+// panic on the way to that answer.
+func TestProbeNoPortFile(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if _, ok := Probe(); ok {
+		t.Fatal("want unhealthy with no port file")
 	}
 }

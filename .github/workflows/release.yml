@@ -34,8 +34,10 @@ jobs:
       - uses: DeLaGuardo/setup-clojure@13.4
         with:
           cli: 1.12.5.1654
+      # Same VERSION the client build gets, so the two halves of the release
+      # agree on what they are and neither warns about the other.
       - name: Build the uberjar
-        run: make uber
+        run: make uber VERSION=${{ github.ref_name }}
       # Deliberately not versioned in the filename: the client looks for exactly
       # otzar-server.jar, so this can be curl'd straight into place without a
       # rename. The release page carries the version.

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"otzar/internal/api"
+	"otzar/internal/buildinfo"
 	"otzar/internal/lifecycle"
 )
 
@@ -47,12 +48,49 @@ func client() (*api.Client, error) {
 // stay clean: a two-second pause is worth explaining to a human, but it is not
 // part of the output.
 func ensureServer() error {
-	if lifecycle.IsHealthy() {
+	if h, ok := lifecycle.Probe(); ok {
+		warnVersionSkew(h.Version)
 		return nil
 	}
 	fmt.Fprintln(os.Stderr, "starting server…")
 	if err := lifecycle.Start(autoStartTimeout); err != nil && !errors.Is(err, lifecycle.ErrAlreadyRunning) {
 		return err
 	}
+	// One more probe, now that there is something to ask: a boot we lost the
+	// race for (ErrAlreadyRunning) can have attached us to a server this binary
+	// didn't install, which is exactly the case worth reporting.
+	if h, ok := lifecycle.Probe(); ok {
+		warnVersionSkew(h.Version)
+	}
 	return nil
+}
+
+// versionSkew is the warning owed to a user whose running server is not the one
+// this binary shipped with, or "" when there is nothing worth saying.
+//
+// Upgrading an install replaces the jar on disk but leaves any running server
+// alone — nothing restarts it, and the client attaches to whatever is already
+// healthy. So the pair silently drifts until someone says so.
+//
+// It warns rather than refuses: the API is compatible far more often than not,
+// and a hard failure would strand a user mid-task over a difference that may not
+// matter. Silent when either side reports "dev", where a source checkout is
+// *expected* to differ from the installed half, and when the server reports
+// nothing at all — that server predates /health carrying a version, which is a
+// difference the user can do nothing more about than the one we'd be reporting.
+func versionSkew(server string) string {
+	client := buildinfo.Version
+	if server == "" || server == buildinfo.Dev || client == buildinfo.Dev || server == client {
+		return ""
+	}
+	return fmt.Sprintf("warning: running server is %s but this client is %s; "+
+		"run `otzar server restart` to load the installed server", server, client)
+}
+
+// warnVersionSkew prints versionSkew's verdict to stderr, where it stays out of
+// piped output and out of the MCP host's JSON-RPC channel.
+func warnVersionSkew(server string) {
+	if msg := versionSkew(server); msg != "" {
+		fmt.Fprintln(os.Stderr, msg)
+	}
 }

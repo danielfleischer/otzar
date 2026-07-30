@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -76,19 +77,43 @@ func readPidRecord() (pidRecord, error) {
 	return pidRecord{PID: pid}, nil
 }
 
-// IsHealthy reports whether the server answers /health on its published port.
-func IsHealthy() bool {
+// Health is what a /health probe learned about the running server. Version is
+// best-effort: a server too old to report one, or a body we can't parse, leaves
+// it empty rather than making the server look unhealthy.
+type Health struct {
+	Version string `json:"version"`
+}
+
+// Probe asks /health on the published port. The bool is the liveness answer —
+// the same one IsHealthy gives — and the Health carries what the response said.
+func Probe() (Health, bool) {
 	base, err := BaseURL()
 	if err != nil {
-		return false
+		return Health{}, false
 	}
 	c := http.Client{Timeout: 500 * time.Millisecond}
 	resp, err := c.Get(base + "/health")
 	if err != nil {
-		return false
+		return Health{}, false
 	}
 	defer resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	if resp.StatusCode != http.StatusOK {
+		return Health{}, false
+	}
+	var h Health
+	// A short read cap: /health is tiny, and a wedged server that streams
+	// forever must not hang a liveness check.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if err == nil {
+		_ = json.Unmarshal(body, &h)
+	}
+	return h, true
+}
+
+// IsHealthy reports whether the server answers /health on its published port.
+func IsHealthy() bool {
+	_, ok := Probe()
+	return ok
 }
 
 func processAlive(pid int) bool {

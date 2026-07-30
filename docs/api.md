@@ -8,7 +8,7 @@ Status legend: ✅ implemented · ⬜ planned (milestone in parens).
 
 | Method | Path            | Status | Notes                                                                                                                                  |
 |--------|-----------------|--------|----------------------------------------------------------------------------------------------------------------------------------------|
-| GET    | `/health`       | ✅     | `{status, uptime_s}`                                                                                                                   |
+| GET    | `/health`       | ✅     | `{status, uptime_s, version, source}` — see [Versioning](#versioning)                                                                  |
 | GET    | `/stats`        | ✅     | `{num_docs, num_chunks}`                                                                                                               |
 | GET    | `/paths`        | ✅     | `{count, paths}` — distinct indexed source files (`otzar list`, MCP `list_indexed_paths`)                                              |
 | GET    | `/roots`        | ✅     | `{roots: [{path, recursive}]}` — the trees asked for, as recorded in `roots.edn` (`otzar index --now` posts them back to `/index`)     |
@@ -21,6 +21,36 @@ Status legend: ✅ implemented · ⬜ planned (milestone in parens).
 | POST   | `/prune`        | ✅     | `{dry_run}` → `{removed, kept}`; drop chunks for source files gone from disk                                                           |
 | GET    | `/watch`        | ✅     | Background auto-reindex state → `{enabled, interval_s, indexing, last_sweep_at?, last_result?}`                                        |
 | POST   | `/watch`        | ✅     | `{enabled, interval_s?}` toggle the sweep → the same status shape; persisted to `watch.edn`                                            |
+
+## Versioning
+
+There is no version negotiation: both halves ship from one release and speak
+whatever this document says. `GET /health` reports the server's version only so
+the mismatch can be *named*, not to gate anything.
+
+`/health` also reports `source`: the absolute path of the jar the server was
+booted from, or its source tree suffixed `(source)`. Both it and `version`
+describe the process that answers, which is the point — the client can only
+predict them, by resolving what it *would* boot from the current directory, and
+that prediction says "checkout" from a checkout no matter which server is
+actually serving. `otzar server status` prefers these, and falls back to its own
+prediction (labelled as one) against a server too old to report them.
+
+Both sides get their version from the same `git describe`, stamped at build time
+— into the client by the Makefile's `-ldflags`, into the jar by `build.clj` (as
+the classpath resource `otzar-version.txt`). Neither has one when built from
+source, and both then say `dev`.
+
+The case this exists for: upgrading an install replaces the jar on disk but does
+not touch a server already running, so a new client drives an old server until
+someone runs `otzar server restart`. The client warns on stderr when the two
+differ, and skips the comparison when either side says `dev` (a checkout is
+*expected* to differ from the installed half).
+
+Compatibility beyond the JSON itself rests on three conventions, none of them
+negotiated: the lifecycle files below, the JVM flags the client supplies when it
+launches the jar (they mirror the `:run` alias in `server/deps.edn`), and the
+2-second heartbeat the streaming `POST /index` writes while working.
 
 ## Lifecycle files (`~/.otzar/`)
 
@@ -42,7 +72,8 @@ Status legend: ✅ implemented · ⬜ planned (milestone in parens).
 ## Implemented response shapes
 
 ```
-GET  /health    200  {"status": "ok", "uptime_s": 12.34}
+GET  /health    200  {"status": "ok", "uptime_s": 12.34, "version": "v1.0.1",
+                      "source": "/home/me/.local/share/otzar/otzar-server.jar"}
 GET  /stats     200  {"num_docs": 42, "num_chunks": 137}
 GET  /paths     200  {"count": 2, "paths": ["/notes/a.md", "/src/b.clj"]}
 POST /shutdown  200  {"ok": true}

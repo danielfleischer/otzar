@@ -36,6 +36,11 @@ and is left running when the host disconnects (stop it explicitly with
 		if err := lifecycle.Start(60 * time.Second); err != nil && !errors.Is(err, lifecycle.ErrAlreadyRunning) {
 			return err
 		}
+		// stderr, like the rest of our logging here: the host reads stdout as
+		// JSON-RPC and would choke on a stray line.
+		if h, ok := lifecycle.Probe(); ok {
+			warnVersionSkew(h.Version)
+		}
 		c, err := api.New()
 		if err != nil {
 			return err
