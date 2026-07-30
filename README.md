@@ -4,6 +4,14 @@
   <img src="docs/otzar.jpg" alt="An open chest of bundled notes, journals, and papers" width="700">
 </p>
 
+<p align="center">
+  <a href="https://github.com/danielfleischer/otzar/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/danielfleischer/otzar/ci.yml?branch=main&style=flat-square&label=build" alt="Build status"></a>
+  <a href="https://github.com/danielfleischer/otzar/releases/latest"><img src="https://img.shields.io/github/v/release/danielfleischer/otzar?style=flat-square&sort=semver" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/danielfleischer/otzar?style=flat-square" alt="GPL-3.0 license"></a>
+  <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-compatible-6D5ACF?style=flat-square" alt="MCP compatible"></a>
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey?style=flat-square" alt="macOS and Linux">
+</p>
+
 **Hybrid search over your own files** — dense vector similarity, BM25 keyword
 matching, and metadata filters in a single query, running entirely on your
 machine. A Clojure/Lucene server holds the index; a Go CLI is the UX; the same
