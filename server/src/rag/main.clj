@@ -21,6 +21,12 @@
   is the server/ dir (see client lifecycle.go), so we drop it there."
   (File. ".nrepl-port"))
 
+(def ^:private http-options
+  "Jetty stays on loopback because the local, single-user API deliberately has
+  no authentication. Port 0 lets the OS choose an unused port for the client to
+  discover through server.port."
+  {:host "127.0.0.1" :port 0 :join? false})
+
 (defn- start-nrepl!
   "-> nREPL server | nil
   When enabled (config/nrepl-enabled?), start the loopback nREPL with the CIDER
@@ -64,7 +70,9 @@
   ;; index. The client (lifecycle.Start) then reports it as a startup crash.
   (index/ensure!)
   (let [nrepl-srv (start-nrepl!)
-        server    (jetty/run-jetty (http/app) {:port 0 :join? false})
+        ;; The HTTP API has no authentication by design, so loopback is part of
+        ;; the security boundary rather than merely a client convention.
+        server    (jetty/run-jetty (http/app) http-options)
         port      (.getLocalPort (first (.getConnectors server)))]
     (write-port! port)
     ;; Arm the background auto-reindex sweep if the user left watch enabled

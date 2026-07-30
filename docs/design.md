@@ -334,9 +334,9 @@ otzar mcp                            # speak MCP over stdio (launched by LLM hos
 otzar --version                      # stamped from `git describe` at build time
 ```
 
-- The server writes `~/.otzar/server.port` on boot (it binds an ephemeral port and
-  records the actual one); the client writes `server.pid` when it spawns the
-  process, and `server.log` catches its output.
+- The server binds an ephemeral loopback-only port and writes it to
+  `~/.otzar/server.port` on boot; the client writes `server.pid` when it spawns
+  the process, and `server.log` catches its output.
 - **Verbs that talk to the index auto-start the server; verbs that talk to the
   server process don't.** `index`, `query`, `list`, `admin *`, and `otzar mcp` boot
   it if it isn't running, announcing that on stderr so piped stdout stays clean.
