@@ -420,6 +420,12 @@ Build:
 - The top-level `Makefile` wires both: `make build`, `make uber`, `make test`,
   `make lint`, `make install` / `install-dev`.
 
+Testing follows the same boundary: 150+ tests across the Clojure server and Go
+client cover filesystem safety, extraction, indexing, retrieval, process
+lifecycle, HTTP client behavior, and the MCP adapter. `make test` runs both
+suites; CI also compile-checks every server namespace and lints and builds the
+client.
+
 The two sides are independently versioned in spirit but ship together — a single
 git tag covers both.
 

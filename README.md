@@ -166,6 +166,9 @@ Working end to end and in daily use: hybrid retrieval, Ollama-backed embeddings,
 metadata filters, live indexing progress, the MCP adapter, auto-reindex, and index
 maintenance. Local-only, single-user, no auth — by design.
 
+**Test coverage:** 150+ tests across the Clojure server and Go client, covering
+filesystem safety, extraction, indexing, retrieval, lifecycle, and MCP boundaries.
+
 Personal project, best-effort maintenance: issues and ideas welcome, pull requests
 probably not. See [`CONTRIBUTING.md`](CONTRIBUTING.md) to build and hack on it.
 
