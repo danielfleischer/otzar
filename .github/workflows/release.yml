@@ -26,12 +26,12 @@ jobs:
     name: Server jar
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "26"
-      - uses: DeLaGuardo/setup-clojure@13.4
+      - uses: DeLaGuardo/setup-clojure@13
         with:
           cli: 1.12.5.1654
       # Same VERSION the client build gets, so the two halves of the release
@@ -41,7 +41,7 @@ jobs:
       # Deliberately not versioned in the filename: the client looks for exactly
       # otzar-server.jar, so this can be curl'd straight into place without a
       # rename. The release page carries the version.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: server-jar
           path: server/target/otzar-server.jar
@@ -58,10 +58,10 @@ jobs:
           - { goos: linux, goarch: amd64 }
           - { goos: linux, goarch: arm64 }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
-          go-version: "1.26.5"
+          go-version: "1.26"
           cache-dependency-path: client/go.sum
       # client-release, not client: no checkout path baked in, so the installed
       # binary looks for the packaged jar instead of a source tree.
@@ -84,7 +84,7 @@ jobs:
     needs: [server, clients]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: assets
           merge-multiple: true
