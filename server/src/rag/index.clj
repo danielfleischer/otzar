@@ -475,6 +475,27 @@
   (let [ps (lucene/paths (ensure!))]
     {:count (count ps) :paths ps}))
 
+(defn reindex!
+  "cancelled?:(->bool)?, on-progress:(fn[event])? -> summary map
+  Rebuild the index from its own contents: re-extract, re-chunk and re-embed every
+  file currently indexed, whether or not anything changed. The escape hatch for a
+  change the incremental gate can't detect — a new chunker, a new chunk field, a
+  different embedding model of the same dimension (a dimension change needs
+  `clear!` first; index-paths! refuses it up front either way).
+
+  The file list is the index's own (`paths`), not the persisted roots: the point is
+  to rebuild exactly what is there, so nothing about what the user asked to keep
+  indexed is read or written. They are concrete files, so `recursive` is
+  irrelevant; one deleted since indexing simply yields nothing and lands in
+  :skipped (prune! is what drops it). Returns index-paths!'s summary, or its zeroes
+  when nothing is indexed. Backs POST /reindex."
+  ([] (reindex! (constantly false) (fn [_])))
+  ([cancelled? on-progress]
+   (let [ps (:paths (paths))]
+     (if (empty? ps)
+       {:indexed 0 :chunks 0 :skipped 0 :unchanged 0 :errors []}
+       (index-paths! ps {:recursive false :force true} cancelled? on-progress)))))
+
 (defn close!
   "-> nil
   Close and forget the index component. No-op if never opened."

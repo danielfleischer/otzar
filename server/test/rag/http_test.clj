@@ -143,6 +143,34 @@
                                           :unchanged 0 :errors []}}
                  (last events))))))))
 
+(deftest reindex-streams-ndjson-and-leaves-roots-alone
+  (testing "the reindex route streams like /index but records nothing: a rebuild of
+            what is already indexed is not a request to start tracking anything"
+    (with-redefs [index/reindex! (fn [_cancelled? emit]
+                                   (emit {:type "start" :total 2})
+                                   {:indexed 2 :chunks 7 :skipped 0 :unchanged 0 :errors []})
+                  ;; the guard: /index calls this, /reindex must not
+                  roots/add-roots! (fn [& _] (throw (AssertionError. "reindex touched roots.edn")))]
+      (let [resp (call (req :post "/reindex"))
+            out  (java.io.ByteArrayOutputStream.)]
+        (is (= 200 (:status resp)))
+        (is (= "application/x-ndjson" (get-in resp [:headers "Content-Type"])))
+        (rcp/write-body-to-stream (:body resp) resp out)
+        (let [events (mapv #(j/read-value (str/trim %) mapper)
+                           (remove str/blank? (str/split-lines (str out))))]
+          (is (= "start" (:type (first events))))
+          (is (= {:type "result" :result {:indexed 2 :chunks 7 :skipped 0
+                                          :unchanged 0 :errors []}}
+                 (last events)))))
+      ;; the fixture's roots file starts empty; nothing may have been written to it
+      (is (zero? (.length config/roots-file))))))
+
+(deftest reindex-takes-no-paths
+  (testing "the file list is the server's own, so a body naming paths is ignored"
+    (with-redefs [index/reindex! (fn [_ _] {:indexed 0 :chunks 0 :skipped 0
+                                            :unchanged 0 :errors []})]
+      (is (= 200 (:status (call (req :post "/reindex" {:paths ["/nope.md"]}))))))))
+
 (deftest query-dimension-mismatch-is-400-with-remediation
   (testing "a dimension-mismatch ex-info from search maps to 400, message + data intact"
     (with-redefs [index/search (fn [_]

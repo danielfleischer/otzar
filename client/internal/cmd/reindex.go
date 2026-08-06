@@ -6,7 +6,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"otzar/internal/api"
 	"otzar/internal/render"
 )
 
@@ -18,9 +17,9 @@ var (
 var reindexCmd = &cobra.Command{
 	Use:   "reindex",
 	Short: "Re-embed every file already in the index (after a chunker/model change)",
-	Long: `Rebuild the index from its own contents. reindex reads the set of source files
-currently indexed — you don't name paths — and re-runs the full pipeline over each
-(re-extract, re-chunk, re-embed), replacing that file's chunks. Unlike a plain
+	Long: `Rebuild the index from its own contents. The server re-runs the full pipeline
+over every source file it already has indexed — you don't name paths — re-extracting,
+re-chunking and re-embedding each, replacing that file's chunks. Unlike a plain
 re-index it re-embeds every file even when nothing changed.
 
 Reach for it after a change the incremental index can't detect on its own: a new
@@ -30,7 +29,8 @@ place — run 'otzar admin clear' first, then index.
 
 Re-embedding calls the embedder for every chunk and can take a while, so reindex
 confirms first; pass --yes to skip. Files deleted from disk since indexing are
-skipped silently (use 'otzar admin prune' to drop them).`,
+skipped silently (use 'otzar admin prune' to drop them). Your indexed roots are
+untouched: this rebuilds the index, it doesn't ask for anything new to be tracked.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Re-embedding a whole index is slow, but IndexStream is bounded by silence
@@ -61,10 +61,10 @@ skipped silently (use 'otzar admin prune' to drop them).`,
 			}
 		}
 
-		// Force re-embed of exactly the indexed files. They're concrete file paths,
-		// so recursion is irrelevant; a path whose file is gone yields nothing.
+		// The server picks the files (its own index contents) and forces the
+		// re-embed; /paths above is only for the count in the prompt.
 		bar := newProgressBar(os.Stderr, !reindexJSON && isTerminal(os.Stderr))
-		res, err := c.IndexStream(api.IndexRequest{Paths: p.Paths, Recursive: false, Force: true}, bar.update)
+		res, err := c.ReindexStream(bar.update)
 		bar.finish()
 		if err != nil {
 			return err

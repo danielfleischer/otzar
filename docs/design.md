@@ -213,9 +213,11 @@ tracking has no citation span.
 - A *dimension* change is a different matter: Lucene cannot apply it to a live
   field, so it is detected up front and reported with the exact fix (`otzar admin
   clear`, then re-index) rather than failing deep inside a merge.
-- Changing an *extractor* is the blind spot in all of this: the bytes and the model
-  are the same, so the gate sees no change. `otzar index --force` is what
-  re-extracts.
+- Changing an *extractor*, a chunker, or the chunk schema is the blind spot in all
+  of this: the bytes and the model are the same, so the gate sees no change.
+  `otzar index --force <paths>` re-extracts those paths; `otzar admin reindex`
+  (`POST /reindex`) does it for the whole index, taking its file list from the
+  index itself and leaving the recorded roots alone (§5).
 
 ## 5. HTTP API
 
@@ -230,6 +232,7 @@ response shapes; the table below is the map.
 | GET    | `/paths`        | `{count, paths}` — the distinct source files indexed    |
 | GET    | `/roots`        | `{roots}` — the trees asked for, with their recursive flag |
 | POST   | `/index`        | Index paths (incremental; streams progress as NDJSON)   |
+| POST   | `/reindex`      | Re-embed everything already indexed (same NDJSON stream) |
 | DELETE | `/index`        | Wipe the whole index                                    |
 | POST   | `/prune`        | Drop chunks for source files gone from disk             |
 | POST   | `/query`        | `{q, k, mode, filters, fusion}` → `{hits}`              |
@@ -238,10 +241,21 @@ response shapes; the table below is the map.
 | POST   | `/watch`        | Toggle it / set the interval                            |
 | POST   | `/shutdown`     | `{ok: true}`, then the process exits                    |
 
-Two verbs are composed in the client rather than given a route of their own, both
-built from `POST /index`: `otzar admin reindex` re-embeds the files in `/paths`
-with `force`, and `otzar index --now` re-scans the trees in `/roots`. That is also
-why there is no `/reindex` route.
+`otzar index --now` is composed in the client rather than given a route of its own:
+it fetches `/roots`, prunes, and posts the trees back to `POST /index`. Re-scanning
+what you asked to index *is* an index request, so the composition says something
+true.
+
+`otzar admin reindex` was built the same way at first — post `/paths` back into
+`/index` with `force` — and that was a mistake worth recording. `POST /index` also
+records what it is given in `roots.edn`, since asking to index a path is asking to
+keep it indexed. Feeding the index's own file list through it therefore promoted
+every indexed file to a single-file root: the sweep then walked each file twice
+(once via its tree, once as itself), and auto-prune, which requires every root to
+still exist on disk, was one deleted file away from switching off for good. The
+composition was wrong because the two verbs mean different things — one adds to
+what is tracked, the other rebuilds what is already there. `POST /reindex` is that
+second meaning, and it reads and writes the index only.
 
 ### 5.1 Query body
 
@@ -328,7 +342,7 @@ otzar query "..." [-k N] [-m hybrid|vector|keyword] [-e md,txt] [-p PREFIX] [--a
 otzar admin stats                    # GET /stats — index size (docs, chunks)
 otzar admin prune [--dry-run]        # POST /prune — drop orphaned files
 otzar admin clear [--yes]            # DELETE /index — wipe the whole index
-otzar admin reindex [--yes]          # re-embed indexed paths via POST /index (force)
+otzar admin reindex [--yes]          # POST /reindex — re-embed everything indexed
 otzar completion {bash|zsh|fish|powershell}   # emit completion script
 otzar mcp                            # speak MCP over stdio (launched by LLM host)
 otzar --version                      # stamped from `git describe` at build time

@@ -265,6 +265,28 @@
                    (set @calls))))))
       (finally (.delete rdir) (.delete fdir)))))
 
+;; ── reindex! ────────────────────────────────────────────────────────────────
+;; index-paths! is stubbed; what's under test is where reindex! gets its file list
+;; and which options it forces.
+
+(deftest reindex-forces-a-rebuild-of-the-indexed-files
+  (let [calls (atom [])]
+    (with-redefs [index/paths        (constantly {:count 2 :paths ["/a.md" "/b.org"]})
+                  roots/read-roots   (fn [] (throw (AssertionError. "reindex must not read roots")))
+                  index/index-paths! (fn [paths opts _cancelled? _on-progress]
+                                       (swap! calls conj [paths opts])
+                                       {:indexed 2 :chunks 9 :unchanged 0 :skipped 0 :errors []})]
+      (let [r (index/reindex! (constantly false) (fn [_]))]
+        (is (= 2 (:indexed r)))
+        (testing "the index's own files, forced, and flat — they're concrete paths"
+          (is (= [[["/a.md" "/b.org"] {:recursive false :force true}]] @calls)))))))
+
+(deftest reindex-of-an-empty-index-does-nothing
+  (with-redefs [index/paths        (constantly {:count 0 :paths []})
+                index/index-paths! (fn [& _] (throw (AssertionError. "nothing to reindex")))]
+    (is (= {:indexed 0 :chunks 0 :skipped 0 :unchanged 0 :errors []}
+           (index/reindex! (constantly false) (fn [_]))))))
+
 ;; ── prune! ──────────────────────────────────────────────────────────────────
 ;; Real temp files and a real throwaway Lucene index (no embedding — chunks are
 ;; written straight in). prune! decides what to drop by comparing the index

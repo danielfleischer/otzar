@@ -16,7 +16,7 @@ Status legend: ✅ implemented · ⬜ planned (milestone in parens).
 | POST   | `/index`        | ✅     | `{paths, recursive}` → `{indexed, ...}`; incremental — re-run to skip unchanged files and replace changed ones                         |
 | POST   | `/query`        | ✅     | `{q, k, mode, filters, fusion}` → `{hits}`; `mode` hybrid (default)/keyword/vector                                                     |
 | GET    | `/document/:id` | ✅     | `id` is a `doc_id` (whole file) or a chunk `id`; 404 if unknown                                                                        |
-| POST   | `/reindex`      | ⬜     | Not needed — `otzar admin reindex` re-embeds the indexed paths via `POST /index` with `force`, so no dedicated endpoint                |
+| POST   | `/reindex`      | ✅     | No body — re-embed every file already indexed (`otzar admin reindex`); streams progress like `/index` and records no roots             |
 | DELETE | `/index`        | ✅     | Wipe the whole index → `{removed_docs, removed_chunks}`; the supported reset after an embedding-dimension change (`otzar admin clear`) |
 | POST   | `/prune`        | ✅     | `{dry_run}` → `{removed, kept}`; drop chunks for source files gone from disk                                                           |
 | GET    | `/watch`        | ✅     | Background auto-reindex state → `{enabled, interval_s, indexing, last_sweep_at?, last_result?}`                                        |
@@ -96,9 +96,14 @@ before anything has been indexed.
 
 It exists so the client can re-run an index over what is already known:
 `otzar index --now` fetches these, prunes, and posts them back to `POST /index`,
-grouped by their `recursive` flag — the same composition `otzar admin reindex`
-does with `/paths`. The background sweep (`GET /watch`) reads the same file
-server-side, so the two agree on what "everything" means without a shared route.
+grouped by their `recursive` flag. The background sweep (`GET /watch`) reads the
+same file server-side, so the two agree on what "everything" means without a
+shared route.
+
+Only `POST /index` writes this list, and nothing removes from it — a root that is
+no longer wanted has to be edited out of `roots.edn` by hand. `POST /reindex`
+deliberately does not write it: rebuilding what is already indexed is not a request
+to track anything new.
 
 ### POST /index
 
@@ -111,6 +116,11 @@ Request:
 - `paths` — absolute paths (the CLI resolves them); required, non-empty.
 - `recursive` — descend into subdirectories (default `true` on the server; the
   CLI sends `false` unless `--recursive`/`-r` is given).
+- `force` — re-embed every file even when the change gate says nothing changed
+  (default `false`). To rebuild the *whole* index, use `POST /reindex` instead.
+
+Each requested path is also recorded in `roots.edn`, because asking to index a
+path is asking to keep it indexed — that is what the watch sweep re-scans.
 
 Response:
 
@@ -124,6 +134,28 @@ Response:
   with no text layer (a scan — there is no OCR). A file we could read but are not
   allowed to (a password-protected PDF) is an `errors` entry, not a skip.
 - `errors` — files that threw during extraction/chunking.
+
+### POST /reindex
+
+No request body. Re-runs the full pipeline — re-extract, re-chunk, re-embed — over
+every source file already in the index, replacing each file's chunks. Unlike
+`POST /index` it re-embeds even when nothing changed, which is the point: it exists
+for the changes the incremental gate cannot see (a new chunker, a new chunk field,
+a different embedding model of the same dimension). A change in embedding
+*dimension* can't be applied in place — `DELETE /index` first, then index.
+
+The response is the same NDJSON progress stream as `POST /index`, terminated by
+the same `result` event, and a disconnect cancels the run the same way.
+
+The file list is the server's own `/paths`, so there is nothing to send and nothing
+to get wrong. That is the whole reason this is a route rather than a client
+composing `/paths` into `/index`: `/index` records what it is given as roots, so
+posting the index's file list back through it would register every indexed file as
+a single-file root. `/reindex` reads and writes the index only — `roots.edn` is
+never touched.
+
+Files deleted from disk since indexing yield nothing and land in `skipped`;
+`POST /prune` is what drops them.
 
 ### DELETE /index
 

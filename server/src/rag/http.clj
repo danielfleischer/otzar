@@ -1,9 +1,12 @@
 (ns rag.http
   "Ring/reitit handlers: /health, /stats, /paths, /roots, /index (POST add,
-  DELETE clear), /prune, /query, /document/:id, /watch (GET status, POST toggle),
-  /shutdown.
+  DELETE clear), /reindex, /prune, /query, /document/:id, /watch (GET status,
+  POST toggle), /shutdown.
   Deletion verbs: /prune drops chunks for source files gone from disk; DELETE /index
-  wipes the whole index. /reindex remains unscheduled (docs/api.md)."
+  wipes the whole index.
+  /index and /reindex share one streaming body (indexing-stream) but differ in what
+  they mean: /index is a request to keep some paths indexed, and records them as
+  roots; /reindex rebuilds what is already indexed and records nothing."
   (:require [reitit.ring :as ring]
             [ring.core.protocols :as rcp]
             [jsonista.core :as j]
@@ -81,11 +84,13 @@
   a disconnected client within roughly this bound (independent of file size)."
   2)
 
-(defn- index-handler
-  "Index the requested paths, streaming the response as newline-delimited JSON so
-  the client can render live progress and a disconnected client cancels the work.
-  index-paths! calls back with `start` and `file` events, each written as one JSON
-  line; the terminal line is {\"type\":\"result\" ...} (or {\"type\":\"error\"}).
+(defn- indexing-stream
+  "(fn [cancelled? on-progress] -> result) -> Ring response
+  Run `f` — some flavour of index/index-paths! — and stream its progress as
+  newline-delimited JSON so the client can render live progress and a disconnected
+  client cancels the work. `f` gets the two callbacks index-paths! wants: each
+  `start`/`file` event is written as one JSON line, and the terminal line is
+  {\"type\":\"result\" ...} (or {\"type\":\"error\"}).
 
   A background timer also writes a heartbeat space every `heartbeat-secs` and
   flushes; when the client is gone the flush (from either the timer or an event
@@ -95,6 +100,39 @@
   even during a single long file, when no `file` event is in flight to probe with.
   A lone heartbeat space is whitespace on the front of the next JSON line, so a
   line-oriented client just trims it."
+  [f]
+  {:status  200
+   :headers {"Content-Type" "application/x-ndjson"}
+   :body
+   (reify rcp/StreamableResponseBody
+     (write-body-to-stream [_ _ out]
+       (let [^OutputStream out out
+             gone  (atom false)     ; set by a failed write = client left
+             lock  (Object.)        ; serialize the writer threads onto `out`
+             emit  (fn [event]      ; one NDJSON line; a write failure = gone
+                     (locking lock
+                       (try
+                         (.write out (.getBytes (str (j/write-value-as-string event) "\n") "UTF-8"))
+                         (.flush out)
+                         (catch IOException _ (reset! gone true)))))
+             beat  (fn []
+                     (locking lock
+                       (try (.write out (int \space)) (.flush out)
+                            (catch IOException _ (reset! gone true)))))
+             sched (Executors/newSingleThreadScheduledExecutor)]
+         (.scheduleAtFixedRate sched ^Runnable beat
+                               heartbeat-secs heartbeat-secs TimeUnit/SECONDS)
+         (let [result (try (f (fn [] @gone) emit)
+                           (catch Throwable t {::error (.getMessage t)}))]
+           (.shutdownNow sched)     ; no more heartbeats before the final line
+           (emit (if-let [e (::error result)]
+                   {:type "error" :error e}
+                   {:type "result" :result result}))
+           (.close out)))))})
+
+(defn- index-handler
+  "POST /index — index the requested paths, streaming progress (see
+  indexing-stream). Body {\"paths\": [..], \"recursive\": bool, \"force\": bool}."
   [req]
   (let [{:keys [paths recursive force] :or {recursive true}} (read-body req)]
     (if (empty? paths)
@@ -103,36 +141,30 @@
        ;; Remember what was asked to index so the watch sweep (rag.watch) can keep
        ;; re-scanning it for new/changed/deleted files. Recorded up front so even a
        ;; client that disconnects mid-index still leaves the root registered.
+       ;;
+       ;; This is why /reindex is a route and not a client-side POST to /index: a
+       ;; rebuild names the files already indexed, and recording *those* as roots
+       ;; would turn one tree into hundreds of single-file roots.
        (roots/add-roots! paths recursive)
-       {:status  200
-       :headers {"Content-Type" "application/x-ndjson"}
-       :body
-       (reify rcp/StreamableResponseBody
-         (write-body-to-stream [_ _ out]
-           (let [^OutputStream out out
-                 gone  (atom false)     ; set by a failed write = client left
-                 lock  (Object.)        ; serialize the writer threads onto `out`
-                 emit  (fn [event]      ; one NDJSON line; a write failure = gone
-                         (locking lock
-                           (try
-                             (.write out (.getBytes (str (j/write-value-as-string event) "\n") "UTF-8"))
-                             (.flush out)
-                             (catch IOException _ (reset! gone true)))))
-                 beat  (fn []
-                         (locking lock
-                           (try (.write out (int \space)) (.flush out)
-                                (catch IOException _ (reset! gone true)))))
-                 sched (Executors/newSingleThreadScheduledExecutor)]
-             (.scheduleAtFixedRate sched ^Runnable beat
-                                   heartbeat-secs heartbeat-secs TimeUnit/SECONDS)
-             (let [result (try (index/index-paths! paths {:recursive recursive :force force}
-                                                   (fn [] @gone) emit)
-                               (catch Throwable t {::error (.getMessage t)}))]
-               (.shutdownNow sched)     ; no more heartbeats before the final line
-               (emit (if-let [e (::error result)]
-                       {:type "error" :error e}
-                       {:type "result" :result result}))
-               (.close out)))))}))))
+       (indexing-stream
+        (fn [cancelled? on-progress]
+          (index/index-paths! paths {:recursive recursive :force force}
+                              cancelled? on-progress)))))))
+
+(defn- reindex-handler
+  "POST /reindex — re-embed everything already in the index, streaming progress the
+  same way /index does. No request body: the file list is the index's own contents
+  (index/reindex!), which is exactly what makes this a route rather than something
+  the client composes. It re-runs the full pipeline over each file — re-extract,
+  re-chunk, re-embed — even when nothing changed, for the changes the incremental
+  gate cannot see: a new chunker, a new chunk field, a different embedding model of
+  the same dimension.
+
+  It touches nothing but the index. Roots are a record of what the user asked to
+  keep indexed; a rebuild of what is already there asks for nothing new, so
+  roots.edn is left exactly as it is."
+  [_]
+  (indexing-stream index/reindex!))
 
 (defn- prune-handler
   "POST /prune — reconcile the index against disk, dropping chunks for source files
@@ -205,6 +237,7 @@
      ["/roots"    {:get  (with-errors roots-handler)}]
      ["/index"    {:post   (with-errors index-handler)
                    :delete (with-errors clear-handler)}]
+     ["/reindex"  {:post (with-errors reindex-handler)}]
      ["/prune"    {:post (with-errors prune-handler)}]
      ["/watch"    {:get  (with-errors watch-handler)
                    :post (with-errors watch-set-handler)}]

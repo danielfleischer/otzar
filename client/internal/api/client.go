@@ -219,9 +219,23 @@ func (c *Client) IndexStream(req IndexRequest, onEvent func(IndexEvent)) (*Index
 	if err := json.NewEncoder(&buf).Encode(req); err != nil {
 		return nil, err
 	}
+	return c.indexStream("/index", &buf, onEvent)
+}
+
+// ReindexStream posts to /reindex and consumes the same NDJSON progress stream as
+// IndexStream. There is no request body: the server re-embeds what its index
+// already holds, so there are no paths to send — and nothing it could mistake for
+// a request to start tracking them.
+func (c *Client) ReindexStream(onEvent func(IndexEvent)) (*IndexResult, error) {
+	return c.indexStream("/reindex", http.NoBody, onEvent)
+}
+
+// indexStream drives one NDJSON indexing stream: POST `path`, feed every progress
+// event to onEvent, and return the terminal "result".
+func (c *Client) indexStream(path string, body io.Reader, onEvent func(IndexEvent)) (*IndexResult, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/index", &buf)
+	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, body)
 	if err != nil {
 		return nil, err
 	}
@@ -233,25 +247,25 @@ func (c *Client) IndexStream(req IndexRequest, onEvent func(IndexEvent)) (*Index
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
-		return nil, serverError("POST", "/index", resp.Status, b)
+		return nil, serverError("POST", path, resp.Status, b)
 	}
 
 	// Cancelling the request is what unblocks a wedged read, so the watchdog has to
 	// do that rather than just report — `stalled` then distinguishes our own
 	// hang-up from a genuine transport failure when the read fails.
 	var stalled atomic.Bool
-	body := io.Reader(resp.Body)
+	stream := io.Reader(resp.Body)
 	if c.stall > 0 {
 		watchdog := time.AfterFunc(c.stall, func() { stalled.Store(true); cancel() })
 		defer watchdog.Stop()
-		body = &stallReader{r: resp.Body, timer: watchdog, d: c.stall}
+		stream = &stallReader{r: resp.Body, timer: watchdog, d: c.stall}
 	}
 	stallErr := func() error {
 		return fmt.Errorf("no progress from the server for %s — it stopped indexing when this "+
 			"connection dropped, but files already committed are kept; check `otzar server status`", c.stall)
 	}
 
-	sc := bufio.NewScanner(body)
+	sc := bufio.NewScanner(stream)
 	// A "result" line with many per-file errors can be large; lift the line cap.
 	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 	var result *IndexResult
