@@ -18,7 +18,7 @@
   "core:    how many fresh sentences each chunk advances by.
    context: overlap sentences added on each side.
    So a chunk holds up to (context + core + context) sentences."
-  {:core 6 :context 2})
+  {:core 5 :context 1})
 
 (defn pack
   "[{:text str, :loc int}], {:core int, :context int}?
