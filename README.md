@@ -110,9 +110,13 @@ otzar query -m vector "semantically similar"      # kNN only
 otzar query -k 5 -e md,txt -p ~/notes/ "topic"    # top-5, filtered
 
 otzar list                          # every indexed path, one per line (alias: ls)
+otzar roots list                    # every tree you asked to keep indexed
+otzar roots remove ~/old-notes      # stop re-scanning a tree (leaves the index alone)
+
 otzar admin stats                   # documents and chunks in the index
 otzar admin prune                   # drop indexed files that no longer exist
 otzar admin clear                   # wipe the entire index
+otzar admin clear --forget-roots    # ...and stop tracking the trees it came from
 otzar admin reindex                 # re-embed everything
 
 otzar server status                 # health, index stats, which server it resolved
@@ -133,6 +137,10 @@ A few things worth knowing:
   is safe to re-run. `otzar index --now` re-scans every tree you've indexed —
   picking up what's new, changed, or deleted — and `server watch` does the same
   thing on an interval, without loading the model when nothing changed.
+- **Two different lists.** `otzar list` is what is *in* the index; `otzar roots list`
+  is what you *asked* to keep indexed, which is what the watch sweep re-scans. A
+  clear empties the first and leaves the second, so the sweep would re-index
+  everything you just wiped — `--forget-roots` empties both.
 - `--mode` picks the retriever; `--ext`, `--path`, and `--after` filter any mode.
 - `-j/--json` on any command gives machine-readable output — for `query`, that
   includes the hybrid score breakdown.

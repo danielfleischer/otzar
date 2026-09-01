@@ -90,11 +90,32 @@ type PruneResult struct {
 	DryRun  bool     `json:"dry_run,omitempty"`
 }
 
+// ClearRequest is the (optional) body of DELETE /index. ForgetRoots also empties
+// roots.edn, so the watch sweep doesn't re-index everything just wiped.
+type ClearRequest struct {
+	ForgetRoots bool `json:"forget_roots,omitempty"`
+}
+
 // ClearResult is the body returned by DELETE /index: the counts that were removed
-// (the index's contents read just before the wipe).
+// (the index's contents read just before the wipe), plus the roots forgotten when
+// the request asked for that.
 type ClearResult struct {
-	RemovedDocs   int `json:"removed_docs"`
-	RemovedChunks int `json:"removed_chunks"`
+	RemovedDocs    int      `json:"removed_docs"`
+	RemovedChunks  int      `json:"removed_chunks"`
+	ForgottenRoots []string `json:"forgotten_roots,omitempty"`
+}
+
+// RemoveRootsRequest is the body of DELETE /roots: the trees to stop tracking.
+type RemoveRootsRequest struct {
+	Paths []string `json:"paths"`
+}
+
+// RemoveRootsResult is the body returned by DELETE /roots: which of the named
+// paths were actually recorded as roots, and the roots that remain. It touches
+// only roots.edn — chunks indexed under those paths stay in the index.
+type RemoveRootsResult struct {
+	Removed []string `json:"removed"`
+	Roots   []Root   `json:"roots"`
 }
 
 // QueryRequest is the body of POST /query.

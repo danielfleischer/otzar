@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -129,5 +130,72 @@ func TestIndexStreamGivesUpOnASilentStream(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "already committed are kept") {
 		t.Fatalf("stall error should say committed work survives, got: %v", err)
+	}
+}
+
+// Clear and RemoveRoots send DELETE with a JSON body — DELETE is not usually a
+// verb with a payload, so the encoding is worth pinning: an argument silently
+// dropped here would look like a working command that quietly did the safer thing.
+func TestClearSendsForgetRootsInTheBody(t *testing.T) {
+	for _, forget := range []bool{true, false} {
+		var got struct {
+			ForgetRoots bool `json:"forget_roots"`
+		}
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodDelete {
+				t.Errorf("clear used %s, want DELETE", r.Method)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+				t.Errorf("clear body did not decode: %v", err)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"removed_docs":2,"removed_chunks":9,"forgotten_roots":["/notes"]}`))
+		}))
+
+		res, err := testClient(srv).Clear(forget)
+		srv.Close()
+		if err != nil {
+			t.Fatalf("Clear(%v): %v", forget, err)
+		}
+		if got.ForgetRoots != forget {
+			t.Errorf("server saw forget_roots=%v, want %v", got.ForgetRoots, forget)
+		}
+		if res.RemovedDocs != 2 || res.RemovedChunks != 9 {
+			t.Errorf("counts not decoded: %+v", res)
+		}
+		if len(res.ForgottenRoots) != 1 || res.ForgottenRoots[0] != "/notes" {
+			t.Errorf("forgotten roots not decoded: %+v", res.ForgottenRoots)
+		}
+	}
+}
+
+func TestRemoveRootsSendsThePaths(t *testing.T) {
+	var got RemoveRootsRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/roots" {
+			t.Errorf("got %s %s, want DELETE /roots", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Errorf("body did not decode: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"removed":["/a"],"roots":[{"path":"/b","recursive":true}]}`))
+	}))
+	defer srv.Close()
+
+	res, err := testClient(srv).RemoveRoots([]string{"/a", "/missing"})
+	if err != nil {
+		t.Fatalf("RemoveRoots: %v", err)
+	}
+	if len(got.Paths) != 2 || got.Paths[0] != "/a" || got.Paths[1] != "/missing" {
+		t.Errorf("server saw paths %v, want both", got.Paths)
+	}
+	// Only /a came back as removed: the caller needs that to tell the user
+	// /missing was never a root, so it must not be inferred from the request.
+	if len(res.Removed) != 1 || res.Removed[0] != "/a" {
+		t.Errorf("removed = %v, want [/a]", res.Removed)
+	}
+	if len(res.Roots) != 1 || res.Roots[0].Path != "/b" {
+		t.Errorf("remaining roots = %+v, want [/b]", res.Roots)
 	}
 }

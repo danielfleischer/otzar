@@ -12,12 +12,13 @@ Status legend: ✅ implemented · ⬜ planned (milestone in parens).
 | GET    | `/stats`        | ✅     | `{num_docs, num_chunks}`                                                                                                               |
 | GET    | `/paths`        | ✅     | `{count, paths}` — distinct indexed source files (`otzar list`, MCP `list_indexed_paths`)                                              |
 | GET    | `/roots`        | ✅     | `{roots: [{path, recursive}]}` — the trees asked for, as recorded in `roots.edn` (`otzar index --now` posts them back to `/index`)     |
+| DELETE | `/roots`        | ✅     | `{paths}` → `{removed, roots}` — stop tracking those trees (`otzar roots remove`); indexes and un-indexes nothing                      |
 | POST   | `/shutdown`     | ✅     | `{ok: true}`, then the process exits                                                                                                   |
 | POST   | `/index`        | ✅     | `{paths, recursive}` → `{indexed, ...}`; incremental — re-run to skip unchanged files and replace changed ones                         |
 | POST   | `/query`        | ✅     | `{q, k, mode, filters, fusion}` → `{hits}`; `mode` hybrid (default)/keyword/vector                                                     |
 | GET    | `/document/:id` | ✅     | `id` is a `doc_id` (whole file) or a chunk `id`; 404 if unknown                                                                        |
 | POST   | `/reindex`      | ✅     | No body — re-embed every file already indexed (`otzar admin reindex`); streams progress like `/index` and records no roots             |
-| DELETE | `/index`        | ✅     | Wipe the whole index → `{removed_docs, removed_chunks}`; the supported reset after an embedding-dimension change (`otzar admin clear`) |
+| DELETE | `/index`        | ✅     | `{forget_roots?}` → `{removed_docs, removed_chunks, forgotten_roots?}`; wipe the whole index — the supported reset after an embedding-dimension change (`otzar admin clear`) |
 | POST   | `/prune`        | ✅     | `{dry_run}` → `{removed, kept}`; drop chunks for source files gone from disk                                                           |
 | GET    | `/watch`        | ✅     | Background auto-reindex state → `{enabled, interval_s, indexing, last_sweep_at?, last_result?}`                                        |
 | POST   | `/watch`        | ✅     | `{enabled, interval_s?}` toggle the sweep → the same status shape; persisted to `watch.edn`                                            |
@@ -100,10 +101,9 @@ grouped by their `recursive` flag. The background sweep (`GET /watch`) reads the
 same file server-side, so the two agree on what "everything" means without a
 shared route.
 
-Only `POST /index` writes this list, and nothing removes from it — a root that is
-no longer wanted has to be edited out of `roots.edn` by hand. `POST /reindex`
-deliberately does not write it: rebuilding what is already indexed is not a request
-to track anything new.
+`POST /index` adds to this list and `DELETE /roots` removes from it; `POST
+/reindex` deliberately does not write it, since rebuilding what is already indexed
+is not a request to track anything new.
 
 Paths posted to `POST /index` are validated *before* being recorded — a path that
 is not on disk, or not readable, is a `400` and nothing is written. A root is
@@ -114,6 +114,31 @@ the sweep refuses to treat a whole subtree as orphaned.
 `roots.edn` is written through a temp file and a rename, so a reader on another
 thread sees the old contents or the new ones and never a truncated file — which
 `read-roots` would degrade to "no roots", silently forgetting every tree.
+
+### DELETE /roots
+
+Request:
+
+```json
+{"paths": ["/Users/me/old-notes"]}
+```
+
+Response:
+
+```json
+{"removed": ["/Users/me/old-notes"],
+ "roots":   [{"path": "/Users/me/notes", "recursive": true}]}
+```
+
+Stop tracking those trees (`otzar roots remove`), so the watch sweep no longer
+re-scans them. This forgets an *intent* and changes no content: chunks already
+indexed under those paths stay searchable, and `POST /prune` is what drops the ones
+whose files are gone.
+
+`removed` names only the paths that were actually recorded, so a caller can tell
+the user which arguments matched nothing. The paths are deliberately not validated
+— a root worth forgetting is usually one whose directory has been deleted or
+unmounted. A missing or empty `paths` is a `400`.
 
 ### POST /index
 
@@ -169,19 +194,29 @@ Files deleted from disk since indexing yield nothing and land in `skipped`;
 
 ### DELETE /index
 
-Wipe the entire index — every chunk of every file — in one call. No request body.
-The source files on disk are untouched; only the index is dropped. Irreversible,
-so the CLI (`otzar admin clear`) confirms before sending it. This is the supported
-reset after switching to an embedding model with a different vector dimension,
-which Lucene can't apply to a live field.
+Wipe the entire index — every chunk of every file — in one call. The source files
+on disk are untouched; only the index is dropped. Irreversible, so the CLI
+(`otzar admin clear`) confirms before sending it. This is the supported reset after
+switching to an embedding model with a different vector dimension, which Lucene
+can't apply to a live field.
+
+Request (optional):
+
+```json
+{"forget_roots": true}
+```
 
 Response:
 
 ```json
-{"removed_docs": 42, "removed_chunks": 137}
+{"removed_docs": 42, "removed_chunks": 137, "forgotten_roots": ["/Users/me/notes"]}
 ```
 
 - `removed_docs` / `removed_chunks` — the index's contents just before the wipe.
+- `forget_roots` also empties `roots.edn`, which is what makes the wipe stick:
+  roots are a standing instruction to keep those trees indexed, so left in place
+  the next watch sweep re-indexes everything just cleared. `forgotten_roots` then
+  lists the paths dropped.
 
 ### POST /query
 

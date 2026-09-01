@@ -68,3 +68,35 @@
         roots    (vec (vals merged))]
     (write-roots! roots)
     roots))
+
+(defn remove-roots!
+  "paths:[str] -> {:removed [str], :roots [{:path :recursive}]}
+  Forget `paths` — stop the watch sweep re-scanning them — and return which ones
+  were actually recorded (:removed, sorted) alongside the roots that remain. Naming
+  a path that isn't a root is not an error; it just doesn't appear in :removed, so
+  the caller can tell the user nothing matched.
+
+  Deliberately unvalidated: forgetting a root whose directory has been deleted or
+  unmounted is the main reason to reach for this. It touches roots.edn only — the
+  chunks already indexed under those paths stay in the index, and `otzar admin
+  prune` is what drops the ones whose files are gone."
+  [paths]
+  (let [drop?    (set (map str paths))
+        current  (read-roots)
+        removed  (vec (sort (filter drop? (map :path current))))
+        kept     (vec (remove (comp drop? :path) current))]
+    (when (seq removed)
+      (write-roots! kept))
+    {:removed removed :roots kept}))
+
+(defn forget-all!
+  "-> {:removed [str]}
+  Drop every recorded root, returning the paths that were forgotten (sorted).
+  Backs `otzar admin clear --forget-roots`: a wipe of the index leaves roots.edn
+  pointing at trees nothing is indexed from any more, and the watch sweep would
+  quietly re-index them all on its next tick."
+  []
+  (let [removed (vec (sort (map :path (read-roots))))]
+    (when (seq removed)
+      (write-roots! []))
+    {:removed removed}))

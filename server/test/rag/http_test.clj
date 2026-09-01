@@ -250,3 +250,38 @@
     (is (= 200 (:status (call (req :post "/index" {:paths [(the-file)]})))))
     (testing "and records it as a root"
       (is (= [(the-file)] (mapv :path (roots/read-roots)))))))
+
+;; ── DELETE /roots ───────────────────────────────────────────────────────────
+
+(deftest roots-remove-forgets-the-named-trees
+  (with-redefs [roots/remove-roots! (fn [paths] {:removed (vec paths)
+                                                 :roots   [{:path "/kept" :recursive true}]})]
+    (let [resp (call (req :delete "/roots" {:paths ["/gone"]}))
+          body (json-body resp)]
+      (is (= 200 (:status resp)))
+      (is (= ["/gone"] (:removed body)))
+      (is (= [{:path "/kept" :recursive true}] (:roots body))))))
+
+(deftest roots-remove-requires-paths
+  (with-redefs [roots/remove-roots! (fn [& _] (throw (AssertionError. "should not remove")))]
+    (doseq [body [nil {} {:paths []}]]
+      (let [resp (call (req :delete "/roots" body))]
+        (is (= 400 (:status resp)))
+        (is (str/includes? (:error (json-body resp)) "paths"))))))
+
+;; ── DELETE /index --forget-roots ────────────────────────────────────────────
+
+(deftest clear-leaves-roots-alone-by-default
+  (with-redefs [index/clear!      (constantly {:removed_docs 2 :removed_chunks 9})
+                roots/forget-all! (fn [] (throw (AssertionError. "clear touched roots.edn")))]
+    (let [resp (call (req :delete "/index"))]
+      (is (= 200 (:status resp)))
+      (is (nil? (:forgotten_roots (json-body resp)))))))
+
+(deftest clear-with-forget-roots-empties-them-too
+  (testing "otherwise the next watch sweep re-indexes everything just wiped"
+    (with-redefs [index/clear!      (constantly {:removed_docs 2 :removed_chunks 9})
+                  roots/forget-all! (constantly {:removed ["/notes"]})]
+      (let [body (json-body (call (req :delete "/index" {:forget_roots true})))]
+        (is (= 2 (:removed_docs body)))
+        (is (= ["/notes"] (:forgotten_roots body)))))))

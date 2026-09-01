@@ -338,10 +338,12 @@ otzar server watch enable [--interval 30m] | disable
 otzar index <path>... [-r] [-f]      # POST /index; -r recursive, -f force re-embed
 otzar index --now                    # re-scan the recorded roots (GET /roots -> POST /index)
 otzar list                           # GET /paths — one absolute path per line (alias: ls)
+otzar roots list                     # GET /roots — the trees asked for (alias: ls)
+otzar roots remove <path>...         # DELETE /roots — stop re-scanning a tree (alias: rm)
 otzar query "..." [-k N] [-m hybrid|vector|keyword] [-e md,txt] [-p PREFIX] [--after DATE]
 otzar admin stats                    # GET /stats — index size (docs, chunks)
 otzar admin prune [--dry-run]        # POST /prune — drop orphaned files
-otzar admin clear [--yes]            # DELETE /index — wipe the whole index
+otzar admin clear [--yes] [--forget-roots]   # DELETE /index — wipe the index, optionally roots.edn too
 otzar admin reindex [--yes]          # POST /reindex — re-embed everything indexed
 otzar completion {bash|zsh|fish|powershell}   # emit completion script
 otzar mcp                            # speak MCP over stdio (launched by LLM host)

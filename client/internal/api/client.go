@@ -136,12 +136,25 @@ func (c *Client) postJSON(path string, body, out any) error {
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
-func (c *Client) deleteJSON(path string, out any) error {
-	req, cancel, err := c.request(http.MethodDelete, path, nil)
+// deleteJSON sends DELETE with an optional JSON body. DELETE carries a body here
+// because both delete verbs take arguments (which roots to forget, whether a clear
+// should forget them too) and a body keeps them in the same JSON shape as every
+// other request rather than introducing query-string parsing on the server.
+func (c *Client) deleteJSON(path string, body, out any) error {
+	var buf bytes.Buffer
+	if body != nil {
+		if err := json.NewEncoder(&buf).Encode(body); err != nil {
+			return err
+		}
+	}
+	req, cancel, err := c.request(http.MethodDelete, path, &buf)
 	if err != nil {
 		return err
 	}
 	defer cancel()
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return err
@@ -316,9 +329,24 @@ func (c *Client) Prune(dryRun bool) (*PruneResult, error) {
 
 // Clear sends DELETE /index to wipe the whole index — every chunk of every file.
 // Irreversible; the CLI gates it behind a confirmation. Returns the counts removed.
-func (c *Client) Clear() (*ClearResult, error) {
+//
+// With forgetRoots the server also empties roots.edn, which is what makes the wipe
+// stick: roots are a standing instruction to keep those trees indexed, so left in
+// place the next watch sweep re-indexes everything just cleared.
+func (c *Client) Clear(forgetRoots bool) (*ClearResult, error) {
 	var r ClearResult
-	if err := c.deleteJSON("/index", &r); err != nil {
+	if err := c.deleteJSON("/index", ClearRequest{ForgetRoots: forgetRoots}, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// RemoveRoots sends DELETE /roots to stop tracking the given trees. It forgets an
+// intent and indexes nothing: chunks already stored under those paths stay
+// searchable, and Prune is what drops the ones whose files are gone.
+func (c *Client) RemoveRoots(paths []string) (*RemoveRootsResult, error) {
+	var r RemoveRootsResult
+	if err := c.deleteJSON("/roots", RemoveRootsRequest{Paths: paths}, &r); err != nil {
 		return nil, err
 	}
 	return &r, nil

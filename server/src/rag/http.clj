@@ -1,7 +1,7 @@
 (ns rag.http
-  "Ring/reitit handlers: /health, /stats, /paths, /roots, /index (POST add,
-  DELETE clear), /reindex, /prune, /query, /document/:id, /watch (GET status,
-  POST toggle), /shutdown.
+  "Ring/reitit handlers: /health, /stats, /paths, /roots (GET list, DELETE forget),
+  /index (POST add, DELETE clear), /reindex, /prune, /query, /document/:id,
+  /watch (GET status, POST toggle), /shutdown.
   Deletion verbs: /prune drops chunks for source files gone from disk; DELETE /index
   wipes the whole index.
   /index and /reindex share one streaming body (indexing-stream) but differ in what
@@ -78,6 +78,21 @@
   reads the same file server-side."
   [_]
   (json 200 {:roots (roots/read-roots)}))
+
+(defn- roots-remove-handler
+  "DELETE /roots — stop tracking the given trees. Body {\"paths\": [..]}. Returns
+  {:removed [path] :roots [{:path :recursive}]}: which of the named paths were
+  actually recorded, and the roots that remain.
+
+  This forgets an *intent*; it indexes and un-indexes nothing. The chunks already
+  stored under those paths stay searchable — POST /prune is what drops the ones
+  whose files are gone. Unvalidated on purpose: a root worth forgetting is often
+  one whose directory no longer exists."
+  [req]
+  (let [{:keys [paths]} (read-body req)]
+    (if (empty? paths)
+      (json 400 {:error "removing roots requires a non-empty \"paths\" array"})
+      (json 200 (roots/remove-roots! paths)))))
 
 (def ^:private heartbeat-secs
   "How often, in seconds, to poke the response socket while indexing so we notice
@@ -193,9 +208,19 @@
   "DELETE /index — wipe the whole index (every chunk of every file), commit, and
   refresh. Irreversible; the client gates it behind a confirmation. Returns the
   counts removed {:removed_docs n :removed_chunks n} (see index/clear!). This is
-  the supported reset after an embedding-dimension change."
-  [_]
-  (json 200 (index/clear!)))
+  the supported reset after an embedding-dimension change.
+
+  Optional body {\"forget_roots\": true} also empties roots.edn, which is what makes
+  the wipe stick: roots are a standing instruction to keep those trees indexed, so
+  left in place the next watch sweep re-indexes everything just cleared. The
+  response then carries :forgotten_roots, the paths dropped."
+  [req]
+  (let [{:keys [forget_roots]} (read-body req)
+        ;; Clear first: forgetting the roots of an index that never got wiped
+        ;; would be the worst of both outcomes.
+        cleared (index/clear!)]
+    (json 200 (cond-> cleared
+                forget_roots (assoc :forgotten_roots (:removed (roots/forget-all!)))))))
 
 (defn- watch-handler
   "GET /watch — current state of the background auto-reindex sweep (rag.watch):
@@ -248,7 +273,8 @@
     [["/health"   {:get  health}]
      ["/stats"    {:get  (with-errors stats)}]
      ["/paths"    {:get  (with-errors paths)}]
-     ["/roots"    {:get  (with-errors roots-handler)}]
+     ["/roots"    {:get    (with-errors roots-handler)
+                   :delete (with-errors roots-remove-handler)}]
      ["/index"    {:post   (with-errors index-handler)
                    :delete (with-errors clear-handler)}]
      ["/reindex"  {:post (with-errors reindex-handler)}]

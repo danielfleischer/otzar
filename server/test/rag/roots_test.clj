@@ -77,12 +77,52 @@
   (testing "empty in, empty out"
     (is (= [] (unusable-paths [])))))
 
+;; ── removal ─────────────────────────────────────────────────────────────────
+
+(deftest remove-forgets-only-what-was-named
+  (with-temp-roots
+    (fn []
+      (roots/add-roots! ["/a" "/b" "/c"] true)
+      (let [r (roots/remove-roots! ["/b"])]
+        (is (= ["/b"] (:removed r)))
+        (is (= ["/a" "/c"] (mapv :path (:roots r))))
+        (is (= ["/a" "/c"] (mapv :path (roots/read-roots)))))))) 
+
+(deftest removing-a-path-that-is-not-a-root-is-not-an-error
+  (with-temp-roots
+    (fn []
+      (roots/add-roots! ["/a"] true)
+      (let [r (roots/remove-roots! ["/never-added"])]
+        (is (= [] (:removed r)))
+        (is (= ["/a"] (mapv :path (:roots r)))))
+      (testing "and the file is left exactly as it was"
+        (is (= [{:path "/a" :recursive true}] (roots/read-roots)))))))
+
+(deftest remove-does-not-validate-the-paths-it-forgets
+  ;; The main reason to forget a root is that its directory is gone — refusing on
+  ;; that basis would make the command useless exactly when it is needed.
+  (with-temp-roots
+    (fn []
+      (roots/add-roots! ["/vanished/volume"] true)
+      (is (= ["/vanished/volume"] (:removed (roots/remove-roots! ["/vanished/volume"]))))
+      (is (= [] (roots/read-roots))))))
+
+(deftest forget-all-empties-the-set
+  (with-temp-roots
+    (fn []
+      (roots/add-roots! ["/b" "/a"] true)
+      (is (= {:removed ["/a" "/b"]} (roots/forget-all!)))
+      (is (= [] (roots/read-roots)))
+      (testing "and is harmless when there was nothing recorded"
+        (is (= {:removed []} (roots/forget-all!)))))))
+
 ;; ── atomic writes ───────────────────────────────────────────────────────────
 
 (deftest a-write-leaves-no-temp-file-behind
   (with-temp-roots
     (fn []
       (roots/add-roots! ["/a"] true)
+      (roots/remove-roots! ["/a"])
       (roots/add-roots! ["/b"] false)
       (let [dir (.getParentFile config/roots-file)]
         (is (= ["roots.edn"] (sort (mapv #(.getName ^java.io.File %) (.listFiles dir)))))))))
