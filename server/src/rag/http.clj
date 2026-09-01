@@ -134,9 +134,23 @@
   "POST /index — index the requested paths, streaming progress (see
   indexing-stream). Body {\"paths\": [..], \"recursive\": bool, \"force\": bool}."
   [req]
-  (let [{:keys [paths recursive force] :or {recursive true}} (read-body req)]
-    (if (empty? paths)
+  (let [{:keys [paths recursive force] :or {recursive true}} (read-body req)
+        bad (roots/unusable paths)]
+    (cond
+      (empty? paths)
       (json 400 {:error "index requires a non-empty \"paths\" array"})
+
+      ;; A root is persisted, so an unusable one is a lasting mistake, not a no-op:
+      ;; a typo would be saved to roots.edn, index nothing, and then stop the watch
+      ;; sweep from ever pruning (a root missing from disk is indistinguishable from
+      ;; an unmounted volume). Refuse the whole request and name what's wrong, rather
+      ;; than half-indexing and writing the bad path down.
+      (seq bad)
+      (json 400 {:error (str "can't index "
+                             (str/join ", " (map #(str \" (:path %) "\" (" (:reason %) ")") bad)))
+                 :data  {:type :unusable-paths :paths bad}})
+
+      :else
       (do
        ;; Remember what was asked to index so the watch sweep (rag.watch) can keep
        ;; re-scanning it for new/changed/deleted files. Recorded up front so even a

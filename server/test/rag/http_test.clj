@@ -13,17 +13,28 @@
 
 (def ^:private mapper (j/object-mapper {:decode-key-fn keyword}))
 
+(def ^:private ^:dynamic *real-file*
+  "An absolute path to a real, readable file, set per test by the fixture. POST
+  /index refuses paths that aren't on disk — they would be persisted as roots — so
+  every test about the index route has to name something that exists."
+  nil)
+
+(defn- the-file [] *real-file*)
+
 ;; POST /index records the requested paths to config/roots-file (rag.roots).
 ;; Redirect that to a throwaway temp file — and neuter ensure-dir! so it doesn't
 ;; re-tighten ~/.otzar — so no test here ever writes the real ~/.otzar/roots.edn.
 (use-fixtures :each
   (fn [t]
-    (let [tmp (java.io.File/createTempFile "http-test-roots" ".edn")]
+    (let [tmp  (java.io.File/createTempFile "http-test-roots" ".edn")
+          real (doto (java.io.File/createTempFile "http-test-index" ".md")
+                 (spit "hello"))]
       (try
         (with-redefs [config/roots-file  tmp
                       config/ensure-dir! (fn [] nil)]
-          (t))
-        (finally (.delete tmp))))))
+          (binding [*real-file* (.getAbsolutePath real)]
+            (t)))
+        (finally (.delete tmp) (.delete real))))))
 
 (defn- req
   "A Ring request map. `body`, if given, is JSON-encoded onto :body (a String,
@@ -131,7 +142,7 @@
                   (fn [_paths _opts _cancelled? emit]
                     (emit {:type "start" :total 1})
                     {:indexed 1 :chunks 3 :skipped 0 :unchanged 0 :errors []})]
-      (let [resp (call (req :post "/index" {:paths ["/a.md"]}))
+      (let [resp (call (req :post "/index" {:paths [(the-file)]}))
             out  (java.io.ByteArrayOutputStream.)]
         (is (= 200 (:status resp)))
         (is (= "application/x-ndjson" (get-in resp [:headers "Content-Type"])))
@@ -186,7 +197,7 @@
   (testing "a mismatch during indexing arrives as the terminal NDJSON error event"
     (with-redefs [index/index-paths!
                   (fn [& _] (throw (ex-info "dim changed\n  otzar admin clear" {:type :dimension-mismatch})))]
-      (let [resp (call (req :post "/index" {:paths ["/a.md"]}))
+      (let [resp (call (req :post "/index" {:paths [(the-file)]}))
             out  (java.io.ByteArrayOutputStream.)]
         (rcp/write-body-to-stream (:body resp) resp out)
         (let [events (->> (str/split-lines (str out))
@@ -208,3 +219,34 @@
       (let [resp (call (req :get "/stats"))]
         (is (= 500 (:status resp)))
         (is (= "boom" (:error (json-body resp))))))))
+
+;; ── root validation on POST /index ──────────────────────────────────────────
+;; A path posted to /index is persisted as a root before the walk begins, so an
+;; unusable one is a lasting mistake: saved forever, indexing nothing, and — since
+;; a root missing from disk reads the same as an unmounted volume — blocking the
+;; watch sweep's pruning from then on.
+
+(deftest index-refuses-a-path-that-is-not-on-disk
+  (with-redefs [index/index-paths! (fn [& _] (throw (AssertionError. "should not index")))
+                roots/add-roots!   (fn [& _] (throw (AssertionError. "should not record a root")))]
+    (let [resp (call (req :post "/index" {:paths ["/no/such/place"]}))
+          body (json-body resp)]
+      (is (= 400 (:status resp)))
+      (is (str/includes? (:error body) "/no/such/place"))
+      (is (str/includes? (:error body) "no such file or directory"))
+      (is (= "unusable-paths" (get-in body [:data :type]))))))
+
+(deftest index-refuses-the-whole-request-when-one-path-is-bad
+  (testing "half-indexing and recording the good path would hide the typo"
+    (with-redefs [index/index-paths! (fn [& _] (throw (AssertionError. "should not index")))
+                  roots/add-roots!   (fn [& _] (throw (AssertionError. "should not record a root")))]
+      (let [resp (call (req :post "/index" {:paths [(the-file) "/no/such/place"]}))]
+        (is (= 400 (:status resp)))
+        (is (= ["/no/such/place"] (mapv :path (get-in (json-body resp) [:data :paths]))))))))
+
+(deftest index-accepts-a-path-that-exists
+  (with-redefs [index/index-paths! (fn [_ _ _ _] {:indexed 1 :chunks 1 :skipped 0
+                                                  :unchanged 0 :errors []})]
+    (is (= 200 (:status (call (req :post "/index" {:paths [(the-file)]})))))
+    (testing "and records it as a root"
+      (is (= [(the-file)] (mapv :path (roots/read-roots)))))))

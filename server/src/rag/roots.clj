@@ -32,12 +32,35 @@
   (config/spit-atomic! config/roots-file
                        (pr-str {:roots (vec (sort-by :path roots))})))
 
+(defn unusable
+  "paths:[str] -> [{:path str :reason str}]
+  The entries of `paths` that can't serve as index roots, each with a short reason
+  — absent from disk, or present but unreadable. Empty when they are all fine.
+
+  This exists because a root is *persisted*, not just walked: a typo saved to
+  roots.edn is not a one-off no-op but a permanent one, and worse, a root that
+  isn't on disk is exactly what makes the watch sweep stop pruning (it can't tell
+  a typo from an unmounted volume, so it refuses to treat a whole subtree as
+  orphaned). Callers check before add-roots!, so nothing that could never index
+  gets written down. Removing a root that has since vanished is a separate matter
+  — see remove-roots!, which never validates."
+  [paths]
+  (reduce (fn [bad p]
+            (let [f (io/file p)]
+              (cond
+                (not (.exists f))  (conj bad {:path (str p) :reason "no such file or directory"})
+                (not (.canRead f)) (conj bad {:path (str p) :reason "not readable"})
+                :else              bad)))
+          [] paths))
+
 (defn add-roots!
   "paths:[str], recursive:bool -> [{:path :recursive}]
   Merge `paths` into the persisted root set, each recorded with `recursive`, keyed
   by absolute path (a repeat updates that path's flag). Returns the merged set.
   Called from the /index handler so every manual index is remembered as something
-  the sweep should keep re-scanning."
+  the sweep should keep re-scanning — which is why that handler runs `unusable`
+  over the paths first and refuses the request rather than saving one that can
+  never index."
   [paths recursive]
   (let [existing (into {} (map (juxt :path identity)) (read-roots))
         merged   (reduce (fn [m p] (assoc m p {:path p :recursive (boolean recursive)}))

@@ -6,6 +6,10 @@
             [rag.config :as config]
             [rag.roots :as roots]))
 
+;; unusable is a pure predicate over the filesystem — no persisted state involved,
+;; so these cases need none of the with-temp-roots redirection.
+(def ^:private unusable-paths roots/unusable)
+
 (defn- with-temp-roots [f]
   (let [dir  (io/file (System/getProperty "java.io.tmpdir")
                       (str "roots-test-" (System/nanoTime)))
@@ -42,6 +46,36 @@
     (fn []
       (spit config/roots-file "{not valid edn")
       (is (= [] (roots/read-roots))))))
+
+;; ── validation ──────────────────────────────────────────────────────────────
+;; A root is *persisted*, so a typo isn't a one-off no-op: it is saved forever,
+;; indexes nothing, and — because a root missing from disk is indistinguishable
+;; from an unmounted volume — stops the watch sweep pruning from then on.
+
+(deftest unusable-catches-paths-that-cannot-be-roots
+  (testing "paths that exist and can be read are fine"
+    (let [f (java.io.File/createTempFile "roots-test" ".md")]
+      (try
+        (is (= [] (unusable-paths [(.getAbsolutePath f)])))
+        (is (= [] (unusable-paths [(.getAbsolutePath (.getParentFile f))])))
+        (finally (.delete f)))))
+
+  (testing "a path that isn't on disk is reported, with a reason"
+    (let [bad (unusable-paths ["/definitely/not/here"])]
+      (is (= ["/definitely/not/here"] (mapv :path bad)))
+      (is (= ["no such file or directory"] (mapv :reason bad)))))
+
+  (testing "every bad path is named, not just the first"
+    (is (= 2 (count (unusable-paths ["/nope/a" "/nope/b"])))))
+
+  (testing "the good ones in a mixed list are not reported"
+    (let [f (java.io.File/createTempFile "roots-test" ".md")]
+      (try
+        (is (= ["/nope/a"] (mapv :path (unusable-paths [(.getAbsolutePath f) "/nope/a"]))))
+        (finally (.delete f)))))
+
+  (testing "empty in, empty out"
+    (is (= [] (unusable-paths [])))))
 
 ;; ── atomic writes ───────────────────────────────────────────────────────────
 

@@ -105,6 +105,12 @@ no longer wanted has to be edited out of `roots.edn` by hand. `POST /reindex`
 deliberately does not write it: rebuilding what is already indexed is not a request
 to track anything new.
 
+Paths posted to `POST /index` are validated *before* being recorded — a path that
+is not on disk, or not readable, is a `400` and nothing is written. A root is
+persisted, so a typo would otherwise be saved forever, index nothing, and stop the
+sweep pruning: a root missing from disk reads exactly like an unmounted volume, and
+the sweep refuses to treat a whole subtree as orphaned.
+
 `roots.edn` is written through a temp file and a rename, so a reader on another
 thread sees the old contents or the new ones and never a truncated file — which
 `read-roots` would degrade to "no roots", silently forgetting every tree.
