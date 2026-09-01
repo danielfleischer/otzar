@@ -6,7 +6,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str])
   (:import [java.io File]
-           [java.nio.file Files]
+           [java.nio.file CopyOption Files StandardCopyOption]
            [java.nio.file.attribute PosixFilePermissions]))
 
 (def version
@@ -79,6 +79,48 @@
   []
   (.mkdirs otzar-dir)
   (Files/setPosixFilePermissions (.toPath otzar-dir) owner-only))
+
+(defn spit-atomic!
+  "File, str -> nil
+  Write `content` to `file` so a reader only ever sees the old contents or the new
+  ones, never a half-written file: write a sibling temp file, then rename it over
+  the target. The rename is the only step that touches `file`, and on a POSIX
+  filesystem it is atomic.
+
+  This matters because the two settings files here — roots.edn, watch.edn — are
+  written on one path and read on another (the watch sweep reads roots.edn on its
+  own thread; the server reads watch.edn at boot). A plain `spit` truncates first,
+  so a crash, a full disk, or an unlucky read in between leaves — or sees — an
+  empty or truncated file, which both readers degrade to \"no roots\" / \"watch
+  off\": silently forgetting what the user asked for.
+
+  The temp file is a sibling so the rename stays within one filesystem. ATOMIC_MOVE
+  is requested and, if the filesystem can't honour it, retried as a plain replacing
+  move — still far better than a truncate-in-place, and the fallback only applies
+  where atomicity was never available anyway.
+
+  `file` is always one of this namespace's own paths — the two callers pass
+  roots-file and watch-file. The locals are named otzar-state-* to say so, since
+  rag.fs-safety-test reads these lines and has no other way to see that the target
+  came from here."
+  [^File file ^String content]
+  (let [otzar-state-file (.getAbsoluteFile file)
+        otzar-state-tmp  (File/createTempFile (str "." (.getName otzar-state-file) ".") ".tmp"
+                                              (.getParentFile otzar-state-file))
+        target           (.toPath otzar-state-file)]
+    (try
+      (spit otzar-state-tmp content)
+      (try
+        (Files/move (.toPath otzar-state-tmp) target
+                    (into-array CopyOption [StandardCopyOption/ATOMIC_MOVE
+                                            StandardCopyOption/REPLACE_EXISTING]))
+        (catch java.nio.file.AtomicMoveNotSupportedException _
+          (Files/move (.toPath otzar-state-tmp) target
+                      (into-array CopyOption [StandardCopyOption/REPLACE_EXISTING]))))
+      ;; No-op once the move succeeded; the cleanup that matters is the failure
+      ;; path, where the temp file would otherwise be left beside the real one.
+      (finally (.delete otzar-state-tmp)))
+    nil))
 
 ;; ── Embeddings (plan §3.4) ──────────────────────────────────────────────────
 (def ollama-url

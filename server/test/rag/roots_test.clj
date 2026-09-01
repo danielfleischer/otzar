@@ -42,3 +42,34 @@
     (fn []
       (spit config/roots-file "{not valid edn")
       (is (= [] (roots/read-roots))))))
+
+;; ── atomic writes ───────────────────────────────────────────────────────────
+
+(deftest a-write-leaves-no-temp-file-behind
+  (with-temp-roots
+    (fn []
+      (roots/add-roots! ["/a"] true)
+      (roots/add-roots! ["/b"] false)
+      (let [dir (.getParentFile config/roots-file)]
+        (is (= ["roots.edn"] (sort (mapv #(.getName ^java.io.File %) (.listFiles dir)))))))))
+
+(deftest a-reader-never-sees-a-half-written-file
+  ;; The point of the temp-file-and-rename: roots.edn is written on one thread and
+  ;; read on another (the watch sweep), and read-roots degrades a truncated file to
+  ;; "no roots" — silently forgetting every tree the user asked to keep indexed.
+  ;; Hammering a reader against a writer must never produce that.
+  (with-temp-roots
+    (fn []
+      (roots/add-roots! ["/a" "/b" "/c"] true)
+      (let [stop    (atom false)
+            seen    (atom #{})
+            reader  (future (while (not @stop)
+                              (swap! seen conj (count (roots/read-roots))))
+                            @seen)]
+        (dotimes [i 200]
+          (roots/add-roots! [(str "/a" i)] true))
+        (reset! stop true)
+        (let [counts @reader]
+          (is (seq counts))
+          (testing "every observed read was a complete root set, never an empty one"
+            (is (not (contains? counts 0)))))))))

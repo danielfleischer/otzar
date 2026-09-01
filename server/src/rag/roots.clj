@@ -26,8 +26,11 @@
 
 (defn- write-roots! [roots]
   (config/ensure-dir!)
-  (spit config/roots-file
-        (pr-str {:roots (vec (sort-by :path roots))})))
+  ;; Atomically, via a temp file and a rename (config/spit-atomic!). read-roots
+  ;; degrades a truncated file to "no roots", so a half-written roots.edn would
+  ;; silently un-register every tree the user asked to keep indexed.
+  (config/spit-atomic! config/roots-file
+                       (pr-str {:roots (vec (sort-by :path roots))})))
 
 (defn add-roots!
   "paths:[str], recursive:bool -> [{:path :recursive}]

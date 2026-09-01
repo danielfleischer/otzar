@@ -105,6 +105,10 @@ no longer wanted has to be edited out of `roots.edn` by hand. `POST /reindex`
 deliberately does not write it: rebuilding what is already indexed is not a request
 to track anything new.
 
+`roots.edn` is written through a temp file and a rename, so a reader on another
+thread sees the old contents or the new ones and never a truncated file — which
+`read-roots` would degrade to "no roots", silently forgetting every tree.
+
 ### POST /index
 
 Request:

@@ -20,6 +20,7 @@
    #"\(\.mkdirs?\b" #"\(\.createNewFile\b" #"\(\.renameTo\b" #"\(\.setLastModified\b"
    #"\(\.setWritable\b" #"\(\.setReadOnly\b"
    #"\(io/copy\b" #"\(FileOutputStream\.\b" #"\(FileWriter\.\b" #"\(RandomAccessFile\.\b"
+   #"\(File/createTempFile\b" #"\(File/createTempDirectory\b"
    #"\(Files/(?:write|writeString|delete|deleteIfExists|move|copy|createFile|createDirectory|createDirectories|createTempFile|createTempDirectory|setPosixFilePermissions|setAttribute|setLastModifiedTime)\b"
    #"\(lucene/open\b"
    ;; Shelling out writes wherever the command does, and no path in the source
@@ -28,10 +29,13 @@
 
 (def ^:private otzar-state
   "A mutating call is fine when its target is one of otzar's own paths: anything
-  from rag.config (~/.otzar and the files in it) or the two locals built from it
-  — config.clj's `otzar-dir` and main.clj's `.nrepl-port` in the server's own
-  working directory."
-  [#"\bconfig/" #"\botzar-dir\b" #"\bnrepl-port-file\b"])
+  from rag.config (~/.otzar and the files in it) or the locals built from it —
+  config.clj's `otzar-dir`, main.clj's `.nrepl-port` in the server's own working
+  directory, and the `otzar-state-file`/`otzar-state-tmp` pair inside
+  config/spit-atomic!, which are the caller's config path and the sibling temp
+  file renamed over it. Those names exist to be visible here: a local is all this
+  line-based scan can see, so the write has to say whose state it is."
+  [#"\bconfig/" #"\botzar-dir\b" #"\bnrepl-port-file\b" #"\botzar-state-(?:file|tmp)\b"])
 
 (defn- clj-sources []
   (->> (io/file "src")

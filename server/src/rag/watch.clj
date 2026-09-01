@@ -38,7 +38,10 @@
 (defn- write-config! []
   (config/ensure-dir!)
   (let [{:keys [enabled interval-s]} @state]
-    (spit config/watch-file (pr-str {:enabled (boolean enabled) :interval-s interval-s}))))
+    ;; Atomically (config/spit-atomic!): read-config degrades a truncated file to
+    ;; the defaults, so a half-written watch.edn silently turns the sweep off.
+    (config/spit-atomic! config/watch-file
+                         (pr-str {:enabled (boolean enabled) :interval-s interval-s}))))
 
 (defn- run-sweep!
   "Run one sweep, catching everything (a thrown task cancels a fixed-rate schedule),
