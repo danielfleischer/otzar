@@ -88,8 +88,16 @@
 (defn- file->chunks
   "Turn one file into a seq of chunk maps (the shape rag.index.lucene expects), or
   a tag when there is nothing to (re)embed:
-    nil          the extractor skipped this file (unsupported type)
+    nil          nothing to index and nothing indexed before — a plain skip
+    ::stale      nothing to index, but this file *is* in the index: its old chunks
+                 are no longer backed by anything on disk and must be dropped
     ::unchanged  already indexed with identical content — skip the costly embed.
+  \"Nothing to index\" is the extractor declining the file (unsupported type, empty,
+  binary, over the size ceiling, unreadable) or an extraction that yields no chunks
+  at all (a file emptied down to whitespace). Either is fine for a file we have
+  never seen — but for one already indexed it means its stored chunks are stale, and
+  leaving them behind would keep the old text searchable under a path whose content
+  is gone. That is the ::stale case; index-paths! deletes the file's chunks.
   Change detection is model-spec → mtime → content-hash. `spec` is the identity of
   the embedding model we'd use now (embed/model-spec); a prior chunk is *reusable*
   only if it was embedded with that same spec — switching OTZAR_EMBED_MODEL (or a
@@ -117,54 +125,66 @@
         doc-id    (sha1 path)
         mtime     (.lastModified f)
         prior     (lucene/doc-meta component doc-id)
-        reusable? (and (not force?) prior (= spec (:model_spec prior)))]
+        reusable? (and (not force?) prior (= spec (:model_spec prior)))
+        ;; What "nothing to index" means here depends on whether we have chunks on
+        ;; file for this path: stale ones to drop, or simply nothing to do. A file
+        ;; that is *gone* is deliberately not our business but prune!'s, which guards
+        ;; against the unmounted-volume case where a whole tree reads as missing at
+        ;; once. The walker already filters those out, so the .exists check only
+        ;; catches a file deleted between the walk and here — but it is what keeps
+        ;; that boundary true even then.
+        nothing   (when (and prior (.exists f)) ::stale)]
     (if (and reusable? (= mtime (:mtime prior)))
       ::unchanged
-      (when-let [text (extractor/extract f)]
+      (if-let [text (extractor/extract f)]
         (let [csha (sha1 text)]
           (if (and reusable? (= csha (:content_sha1 prior)))
             ::unchanged
-            (let [ext      (extractor/ext f)
-                  loc      (extractor/locator f)
-                  chunks   (chunker/pack (segmenter/segment text loc))
-                  _        (when (seq chunks)
-                             (on-progress {:type "file-start" :path path :total (count chunks)}))
-                  on-batch (fn [done total]
-                             (on-progress {:type "chunk" :path path :done done :total total}))
-                  vecs     (embed/embed-documents (map :text chunks) cancelled? on-batch)]
-              (mapv (fn [{:keys [chunk_idx text loc_start loc_end]} embedding]
-                      {:id           (str doc-id ":" chunk_idx)
-                       :doc_id       doc-id
-                       :path         path
-                       :ext          ext
-                       :mtime        mtime
-                       :chunk_idx    chunk_idx
-                       :locator      loc
-                       :loc_start    loc_start
-                       :loc_end      loc_end
-                       :text         text
-                       :content_sha1 csha
-                       :model_spec   spec
-                       :embedding    embedding})
-                    chunks vecs))))))))
+            (let [ext    (extractor/ext f)
+                  loc    (extractor/locator f)
+                  chunks (chunker/pack (segmenter/segment text loc))]
+              (if (empty? chunks)
+                nothing
+                (let [_        (on-progress {:type "file-start" :path path :total (count chunks)})
+                      on-batch (fn [done total]
+                                 (on-progress {:type "chunk" :path path :done done :total total}))
+                      vecs     (embed/embed-documents (map :text chunks) cancelled? on-batch)]
+                  (mapv (fn [{:keys [chunk_idx text loc_start loc_end]} embedding]
+                          {:id           (str doc-id ":" chunk_idx)
+                           :doc_id       doc-id
+                           :path         path
+                           :ext          ext
+                           :mtime        mtime
+                           :chunk_idx    chunk_idx
+                           :locator      loc
+                           :loc_start    loc_start
+                           :loc_end      loc_end
+                           :text         text
+                           :content_sha1 csha
+                           :model_spec   spec
+                           :embedding    embedding})
+                        chunks vecs))))))
+        nothing))))
 
 (defn- embed-file-result
   "Run the change-check + extract+chunk+embed for one file (the Ollama-bound part
   we want off the writer thread). Never throws — the result is a map tagged with
   the source file so the writer thread can attribute it:
     {:file f :unchanged true}   already indexed, identical content (nothing embedded)
-    {:file f :chunks <seq>}     ok; empty/nil chunks means the extractor skipped it
+    {:file f :stale true}       nothing to index, but its old chunks are still there
+    {:file f :chunks <seq>}     ok; nil chunks means this file was never indexable
     {:file f :error <msg>}      extract or embed threw (incl. a cancelled embed)"
   [component spec ^java.io.File f cancelled? on-progress force?]
   (try
     (let [r (file->chunks component spec f cancelled? on-progress force?)]
-      (if (= ::unchanged r)
-        {:file f :unchanged true}
+      (case r
+        ::unchanged {:file f :unchanged true}
+        ::stale     {:file f :stale true}
         {:file f :chunks r}))
     (catch Exception e {:file f :error (.getMessage e)})))
 
 (defn index-paths!
-  "paths:[str|File], {:recursive bool}, cancelled?:(->bool)?, on-progress:(fn[event])? -> {:indexed :chunks :skipped :unchanged :errors [..] :cancelled?}
+  "paths:[str|File], {:recursive bool}, cancelled?:(->bool)?, on-progress:(fn[event])? -> {:indexed :chunks :skipped :unchanged :removed :errors [..] :cancelled?}
   Walk `paths`, extract + chunk + embed each file, and add all chunks to the
   index. The change-check + extract+embed work runs through a bounded pool of
   `config/index-concurrency` workers (it is Ollama-bound and parallelizes well);
@@ -182,6 +202,15 @@
   re-embeds every file regardless (the escape hatch for a chunker/schema change the
   content+model gate can't detect; see file->chunks).
 
+  A file that *was* indexed but no longer yields anything — emptied, overwritten
+  with binary, grown past the size ceiling, or turned unreadable, but still there on
+  disk (a file that is simply *gone* is prune!'s business) — has its stored
+  chunks deleted rather than left behind (file->chunks tags it ::stale), and is
+  counted under :removed. Without that, the old text stays searchable under a path
+  whose content is gone. Deleted docs are expunged once at the end of the run (the
+  same reclaim prune! does) so :num_docs and /paths read honestly straight away;
+  that only happens when something was actually removed.
+
   The 3-arg form takes a no-arg `cancelled?` predicate, polled both here (per
   file) and inside the embedder (between batches, via file->chunks). Once it turns
   true the index is *cancelled*: no more files are submitted and in-flight embeds
@@ -191,13 +220,14 @@
   heartbeat write so a disconnected client stops the indexing — and, because it
   reaches into the embed batches, the Ollama work in flight is bounded to the
   current batch rather than a whole file.
-  Returns {:indexed <files> :chunks <n> :skipped :unchanged :errors [{:path ..}]}.
+  Returns {:indexed <files> :chunks <n> :skipped :unchanged :removed
+  :errors [{:path ..}]}.
 
   `on-progress` (optional, default no-op) is called with plain event maps as work
   advances, for a streaming progress UI: once with {:type \"start\" :total <file
   count>} after the walk enumerates, then once per completed file with {:type
   \"file\" :done <files-processed-so-far> :path <abs> :status \"indexed\"|
-  \"unchanged\"|\"skipped\"|\"error\" :chunks <n written for this file>}. As each
+  \"unchanged\"|\"skipped\"|\"removed\"|\"error\" :chunks <n written for this file>}. As each
   file embeds it also emits {:type \"file-start\" :path <abs> :total <chunks>} then
   {:type \"chunk\" :path <abs> :done <so far> :total <chunks>} per batch. The
   `file`/`start` events come from this (the draining) thread in completion order;
@@ -219,29 +249,40 @@
          submit (fn [^java.io.File f]
                   (.submit ecs ^Callable (fn [] (embed-file-result idx spec f cancelled? on-progress force))))
          ;; Fold one file's result into the running counters, writing its chunks to
-         ;; the index (as one atomic block). Returns [[indexed chunks skipped
-         ;; unchanged errors] status fchunks] — status/fchunks feed the progress UI.
-         process (fn [[indexed chunks skipped unchanged errors]
-                      {:keys [^java.io.File file error] unchg :unchanged cs :chunks}]
+         ;; the index (as one atomic block) or dropping the stale ones it left
+         ;; behind. Returns [[indexed chunks skipped unchanged removed errors]
+         ;; status fchunks] — status/fchunks feed the progress UI.
+         process (fn [[indexed chunks skipped unchanged removed errors]
+                      {:keys [^java.io.File file error stale] unchg :unchanged cs :chunks}]
                    (cond
-                     error    [[indexed chunks skipped unchanged
+                     error    [[indexed chunks skipped unchanged removed
                                 (conj errors {:path (.getAbsolutePath file) :error error})]
                                "error" 0]
-                     unchg    [[indexed chunks skipped (inc unchanged) errors] "unchanged" 0]
+                     unchg    [[indexed chunks skipped (inc unchanged) removed errors] "unchanged" 0]
+                     ;; Indexed before, unextractable now: its chunks no longer
+                     ;; describe anything on disk, so they go.
+                     stale    (do (lucene/delete-by-paths! idx [(.getAbsolutePath file)])
+                                  [[indexed chunks skipped unchanged (inc removed) errors]
+                                   "removed" 0])
                      (seq cs) (do (lucene/add-chunks! idx cs)
-                                  [[(inc indexed) (+ chunks (count cs)) skipped unchanged errors]
+                                  [[(inc indexed) (+ chunks (count cs)) skipped unchanged removed errors]
                                    "indexed" (count cs)])
-                     :else    [[indexed chunks (inc skipped) unchanged errors] "skipped" 0]))
-         finish (fn [[indexed chunks skipped unchanged errors] cancelled]
-                  (lucene/commit! idx)
+                     :else    [[indexed chunks (inc skipped) unchanged removed errors] "skipped" 0]))
+         finish (fn [[indexed chunks skipped unchanged removed errors] cancelled]
+                  ;; A delete only marks docs; the term dictionary — and so /paths
+                  ;; and :num_docs — keeps them until the segment is rewritten, so
+                  ;; a run that dropped anything reclaims (which commits) instead.
+                  (if (pos? removed)
+                    (lucene/reclaim-deletes! idx)
+                    (lucene/commit! idx))
                   (cond-> {:indexed indexed :chunks chunks :skipped skipped
-                           :unchanged unchanged :errors errors}
+                           :unchanged unchanged :removed removed :errors errors}
                     cancelled (assoc :cancelled true)))]
      (try
        (run! submit (take config/index-concurrency files))
        (loop [pending     (drop config/index-concurrency files)
               taken       0
-              counters    [0 0 0 0 []]     ; indexed chunks skipped unchanged errors
+              counters    [0 0 0 0 0 []]   ; indexed chunks skipped unchanged removed errors
               dirty?      false            ; chunks added since the last commit
               last-commit (System/currentTimeMillis)]
          (if (= taken n-files)
@@ -260,16 +301,18 @@
                (let [_ (when (seq pending) (submit (first pending)))  ; keep the window full
                      pending (if (seq pending) (rest pending) pending)
                      [counters status fchunks] (process counters result)
-                     [indexed chunks skipped unchanged errors] counters
+                     [indexed chunks skipped unchanged removed errors] counters
                      ;; Commit periodically so finished files are durable before any
-                     ;; interrupt, without an fsync per file.
-                     dirty? (or dirty? (= status "indexed"))
+                     ;; interrupt, without an fsync per file. A removal counts as
+                     ;; dirty too — a deletion left uncommitted is stale text still
+                     ;; searchable after an interrupt.
+                     dirty? (or dirty? (contains? #{"indexed" "removed"} status))
                      now    (System/currentTimeMillis)
                      [dirty? last-commit] (if (and dirty? (>= (- now last-commit) commit-interval-ms))
                                             (do (lucene/commit! idx) [false now])
                                             [dirty? last-commit])]
                  (on-progress {:type "file"
-                               :done (+ indexed unchanged skipped (count errors))
+                               :done (+ indexed unchanged skipped removed (count errors))
                                :path (.getAbsolutePath ^java.io.File (:file result))
                                :status status
                                :chunks fchunks})
@@ -413,7 +456,9 @@
     :skipped        true when a run was already in progress (nothing else present)
     :roots :present counts of recorded vs. currently-on-disk roots
     :pruned         orphan paths dropped (absent/empty when pruning was skipped)
-    :indexed :chunks :unchanged :skipped_files  folded index-paths! counters
+    :indexed :chunks :unchanged :skipped_files :removed_files  folded index-paths!
+                    counters (:removed_files being files whose content stopped being
+                    extractable, so their stale chunks were dropped)
     :errors         per-file errors from the re-index"
   []
   (if-not (.tryLock run-lock)
@@ -421,7 +466,8 @@
     (try
       (let [all-roots (roots/read-roots)]
         (if (empty? all-roots)
-          {:roots 0 :present 0 :indexed 0 :chunks 0 :unchanged 0 :skipped_files 0 :errors []}
+          {:roots 0 :present 0 :indexed 0 :chunks 0 :unchanged 0 :skipped_files 0
+           :removed_files 0 :errors []}
           (let [present  (filterv #(.exists (io/file ^String (:path %))) all-roots)
                 all?     (= (count present) (count all-roots))
                 pruned   (when all? (:removed (prune! {})))
@@ -439,6 +485,7 @@
              :chunks        (sum :chunks)
              :unchanged     (sum :unchanged)
              :skipped_files (sum :skipped)
+             :removed_files (sum :removed)
              :errors        (into [] (mapcat :errors) results)})))
       (finally (.unlock run-lock)))))
 
@@ -493,7 +540,7 @@
   ([cancelled? on-progress]
    (let [ps (:paths (paths))]
      (if (empty? ps)
-       {:indexed 0 :chunks 0 :skipped 0 :unchanged 0 :errors []}
+       {:indexed 0 :chunks 0 :skipped 0 :unchanged 0 :removed 0 :errors []}
        (index-paths! ps {:recursive false :force true} cancelled? on-progress)))))
 
 (defn close!

@@ -199,3 +199,24 @@ func TestRemoveRootsSendsThePaths(t *testing.T) {
 		t.Errorf("remaining roots = %+v, want [/b]", res.Roots)
 	}
 }
+
+// The stale-chunk fix added a counter to the index result. The CLI only prints it
+// when non-zero, so a decoding slip would be invisible rather than loud.
+func TestIndexResultDecodesRemoved(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.Write([]byte(`{"type":"result","result":{"indexed":1,"chunks":3,"skipped":0,"unchanged":2,"removed":4,"errors":[]}}` + "\n"))
+	}))
+	defer srv.Close()
+
+	res, err := testClient(srv).IndexStream(IndexRequest{Paths: []string{"/a.md"}}, nil)
+	if err != nil {
+		t.Fatalf("IndexStream: %v", err)
+	}
+	if res.Removed != 4 {
+		t.Errorf("removed = %d, want 4", res.Removed)
+	}
+	if res.Unchanged != 2 || res.Indexed != 1 {
+		t.Errorf("other counters disturbed: %+v", res)
+	}
+}

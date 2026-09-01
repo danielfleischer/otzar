@@ -160,14 +160,23 @@ path is asking to keep it indexed — that is what the watch sweep re-scans.
 Response:
 
 ```json
-{"indexed": 12, "chunks": 340, "skipped": 3,
+{"indexed": 12, "chunks": 340, "skipped": 3, "unchanged": 37, "removed": 1,
  "errors": [{"path": "/abs/broken.md", "error": "..."}]}
 ```
 
 - `indexed` — files that produced at least one chunk.
-- `skipped` — files skipped by the extractor: empty, oversized, binary, or a PDF
-  with no text layer (a scan — there is no OCR). A file we could read but are not
-  allowed to (a password-protected PDF) is an `errors` entry, not a skip.
+- `unchanged` — files already indexed with identical content, skipped without
+  re-embedding.
+- `skipped` — files the extractor declined that were *never* indexed: empty,
+  oversized, binary, or a PDF with no text layer (a scan — there is no OCR). A file
+  we could read but are not allowed to (a password-protected PDF) is an `errors`
+  entry, not a skip.
+- `removed` — files that *had* been indexed and stopped yielding anything: emptied,
+  overwritten with binary, grown past the size ceiling, or turned unreadable. Their
+  stored chunks are deleted, since they no longer describe anything on disk and
+  would otherwise stay searchable under a path whose content is gone. A file simply
+  deleted from disk is not counted here — that is `POST /prune`, which owns the
+  guard against an unmounted volume looking like a mass deletion.
 - `errors` — files that threw during extraction/chunking.
 
 ### POST /reindex
@@ -322,7 +331,7 @@ persists to `watch.edn` so it survives a restart.
  "last_sweep_at": 1712345678000,
  "last_result": {"roots": 2, "present": 2, "pruned": [],
                  "indexed": 1, "chunks": 4, "unchanged": 37,
-                 "skipped_files": 0, "errors": []}}
+                 "skipped_files": 0, "removed_files": 0, "errors": []}}
 ```
 
 - `interval_s` — seconds between sweeps (default 1800; `OTZAR_WATCH_INTERVAL` or a

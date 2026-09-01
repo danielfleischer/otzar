@@ -80,6 +80,9 @@ untouched: this rebuilds the index, it doesn't ask for anything new to be tracke
 			{"skipped", fmt.Sprintf("%d files", res.Skipped)},
 			{"errors", fmt.Sprintf("%d", len(res.Errors))},
 		}
+		if res.Removed > 0 {
+			kv = append(kv, [2]string{"removed", fmt.Sprintf("%d files no longer readable", res.Removed)})
+		}
 		if res.Cancelled {
 			kv = append(kv, [2]string{"cancelled", "yes (client disconnected)"})
 		}

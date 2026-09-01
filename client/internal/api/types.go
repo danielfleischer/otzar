@@ -43,8 +43,9 @@ type IndexRequest struct {
 type IndexResult struct {
 	Indexed   int          `json:"indexed"`   // files that produced at least one chunk
 	Chunks    int          `json:"chunks"`    // total chunks written
-	Skipped   int          `json:"skipped"`   // files skipped (empty/binary/oversized)
+	Skipped   int          `json:"skipped"`   // files skipped (empty/binary/oversized), never indexed
 	Unchanged int          `json:"unchanged"` // files already indexed with identical content
+	Removed   int          `json:"removed"`   // files that were indexed but stopped being extractable
 	Cancelled bool         `json:"cancelled,omitempty"`
 	Errors    []IndexError `json:"errors"`
 }

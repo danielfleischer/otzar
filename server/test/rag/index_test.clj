@@ -284,7 +284,7 @@
 (deftest reindex-of-an-empty-index-does-nothing
   (with-redefs [index/paths        (constantly {:count 0 :paths []})
                 index/index-paths! (fn [& _] (throw (AssertionError. "nothing to reindex")))]
-    (is (= {:indexed 0 :chunks 0 :skipped 0 :unchanged 0 :errors []}
+    (is (= {:indexed 0 :chunks 0 :skipped 0 :unchanged 0 :removed 0 :errors []}
            (index/reindex! (constantly false) (fn [_]))))))
 
 ;; ── prune! ──────────────────────────────────────────────────────────────────
@@ -466,3 +466,109 @@
         (is (= {:removed_docs 2 :removed_chunks 2} (index/clear!)))
         (is (= {:num_docs 0 :num_chunks 0} (lucene/stats idx)))
         (is (= before (snapshot dir)))))))
+
+;; ── stale chunks for a file that stops being extractable ────────────────────
+;; The bug these guard: a file counted as "skipped" left its previously indexed
+;; chunks in place, so text that no longer exists anywhere on disk stayed
+;; searchable — and `otzar list` kept naming the file as indexed.
+
+(defn- with-bigger-tree
+  "Call `(f dir idx)` over a tree of `n` indexable .md files and a real throwaway
+  index, embedder stubbed as in with-real-pipeline.
+
+  `n` is 6 rather than 2 for the same reason the prune tests use 20: reclaiming a
+  deleted doc's terms depends on the merge policy actually rewriting the segment,
+  and TieredMergePolicy declines to rewrite a lone segment of four docs or fewer
+  whatever forceMergeDeletesPctAllowed says. Below that floor the chunk is deleted
+  and unsearchable but its path lingers in the term dictionary, so /paths and
+  :num_docs would read stale — a pre-existing limitation of reclaim-deletes! that
+  `otzar admin prune` shares, not something these tests are about."
+  [n f]
+  (let [dir     (temp-dir)
+        idx-dir (temp-dir)]
+    (dotimes [i n]
+      (spit (io/file dir (str "f" i ".md")) (str "Alpha beta gamma number " i ".\n")))
+    (let [idx (lucene/open idx-dir)]
+      (try
+        (with-redefs [index/ensure!         (constantly idx)
+                      embed/embedding-dim   (constantly 3)
+                      embed/model-spec      (constantly spec)
+                      embed/embed-documents (fn [texts & _]
+                                              (mapv (fn [_] (float-array [0.1 0.2 0.3])) texts))]
+          (f dir idx))
+        (finally (lucene/close idx) (rm-r dir) (rm-r idx-dir))))))
+
+(defn- becomes-unextractable!
+  "Make an already-indexed file stop yielding text, the way a real one does when it
+  is emptied or overwritten with something binary, and bump its mtime so the change
+  gate notices."
+  [^File f kind]
+  (case kind
+    :emptied (spit f "   \n\n  \n")
+    :binary  (with-open [os (io/output-stream f)]
+               (.write os (byte-array (map byte [0 1 2 65 66])))))
+  (.setLastModified f (+ 100000 (.lastModified f))))
+
+(deftest a-file-that-stops-being-extractable-loses-its-chunks
+  (doseq [kind [:emptied :binary]]
+    (testing (str "a previously indexed file, now " (name kind))
+      (with-bigger-tree 6
+        (fn [dir idx]
+          (index/index-paths! [(.getPath dir)] {:recursive true})
+          (is (= 6 (:num_docs (lucene/stats idx))))
+
+          (let [f (io/file dir "f0.md")
+                p (.getAbsolutePath f)]
+            (becomes-unextractable! f kind)
+            (let [r (index/index-paths! [(.getPath dir)] {:recursive true})]
+              (testing "it is reported as removed, not silently skipped"
+                (is (= 1 (:removed r)))
+                (is (zero? (:skipped r))))
+              (testing "its chunks are gone — nothing of it is searchable or listed"
+                (is (= 5 (:num_docs (lucene/stats idx))))
+                (is (= 5 (:num_chunks (lucene/stats idx))))
+                (is (not (some #{p} (lucene/paths idx)))))
+              (testing "the other files are untouched"
+                (is (= 5 (count (lucene/paths idx)))))
+              (testing "and the file itself is still on disk — only the index changed"
+                (is (.exists f))))))))))
+
+(deftest a-file-never-indexed-is-skipped-not-removed
+  (with-bigger-tree 6
+    (fn [dir idx]
+      (index/index-paths! [(.getPath dir)] {:recursive true})
+      ;; A new file that never indexes: there is nothing stale to drop, so it is
+      ;; still a plain skip and the counts must say so.
+      (let [f (io/file dir "junk.md")]
+        (with-open [os (io/output-stream f)]
+          (.write os (byte-array (map byte [0 1 2 65]))))
+        (let [r (index/index-paths! [(.getPath dir)] {:recursive true})]
+          (is (= 1 (:skipped r)))
+          (is (zero? (:removed r)))
+          (is (= 6 (:num_docs (lucene/stats idx)))))))))
+
+(deftest a-vanished-file-is-left-for-prune
+  ;; Deletion is prune!'s job, and deliberately so: it is the one with the
+  ;; mass-deletion guard for an unmounted volume. An index run must not take that
+  ;; decision on its own.
+  (with-bigger-tree 6
+    (fn [dir idx]
+      (index/index-paths! [(.getPath dir)] {:recursive true})
+      (let [f (io/file dir "f0.md")
+            p (.getAbsolutePath f)]
+        (.delete f)
+        (let [r (index/reindex! (constantly false) (fn [_]))]
+          (is (zero? (:removed r)))
+          (is (some #{p} (lucene/paths idx))))))))
+
+(deftest an-ordinary-run-removes-nothing
+  (with-real-pipeline
+    (fn [dir idx]
+      (let [r (index/index-paths! [(.getPath dir)] {:recursive true})]
+        (is (= 2 (:indexed r)))
+        (is (zero? (:removed r)))
+        (is (= 2 (:num_docs (lucene/stats idx)))))
+      (testing "nor does a second run over an unchanged tree"
+        (let [r (index/index-paths! [(.getPath dir)] {:recursive true})]
+          (is (= 2 (:unchanged r)))
+          (is (zero? (:removed r))))))))

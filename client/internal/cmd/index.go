@@ -81,6 +81,11 @@ Each tree keeps the --recursive setting it was indexed with.`,
 			{"skipped", fmt.Sprintf("%d files", res.Skipped)},
 			{"errors", fmt.Sprintf("%d", len(res.Errors))},
 		}
+		// Only when it happened: dropping stale chunks is rare, and a permanent
+		// "removed 0 files" line would just be noise on every ordinary run.
+		if res.Removed > 0 {
+			kv = append(kv, [2]string{"removed", fmt.Sprintf("%d files no longer readable", res.Removed)})
+		}
 		if res.Cancelled {
 			kv = append(kv, [2]string{"cancelled", "yes (client disconnected)"})
 		}
@@ -155,6 +160,7 @@ func indexKnownRoots(c *api.Client) error {
 		total.Chunks += res.Chunks
 		total.Unchanged += res.Unchanged
 		total.Skipped += res.Skipped
+		total.Removed += res.Removed
 		total.Errors = append(total.Errors, res.Errors...)
 		total.Cancelled = total.Cancelled || res.Cancelled
 	}
@@ -171,6 +177,9 @@ func indexKnownRoots(c *api.Client) error {
 		{"skipped", fmt.Sprintf("%d files", total.Skipped)},
 		{"pruned", fmt.Sprintf("%d gone from disk", pruned)},
 		{"errors", fmt.Sprintf("%d", len(total.Errors))},
+	}
+	if total.Removed > 0 {
+		kv = append(kv, [2]string{"removed", fmt.Sprintf("%d files no longer readable", total.Removed)})
 	}
 	render.KV(kv)
 	if missing > 0 {

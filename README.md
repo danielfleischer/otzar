@@ -141,6 +141,10 @@ A few things worth knowing:
   is what you *asked* to keep indexed, which is what the watch sweep re-scans. A
   clear empties the first and leaves the second, so the sweep would re-index
   everything you just wiped — `--forget-roots` empties both.
+- **A file that stops being readable loses its chunks.** If an indexed file is
+  emptied, overwritten with something binary, or grows past the size ceiling, the
+  next index run drops what it had stored rather than leaving the old text
+  searchable. Deleting the file is a separate matter: that is `otzar admin prune`.
 - `--mode` picks the retriever; `--ext`, `--path`, and `--after` filter any mode.
 - `-j/--json` on any command gives machine-readable output — for `query`, that
   includes the hybrid score breakdown.
