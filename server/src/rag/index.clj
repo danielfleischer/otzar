@@ -22,19 +22,44 @@
 
 (defonce ^:private component (atom nil))
 
-;; Single-flight guard over index runs. Both the manual /index (index-paths!) and
-;; the background watch sweep (sweep!) take it, so they never overlap and double the
-;; writer/embed load. Manual index acquires it blocking (it always runs, just after
-;; any in-progress run); the sweep takes it with tryLock and simply skips the tick if
-;; a run is already going. Reentrant so sweep! can hold it across its own call into
-;; index-paths!.
-(defonce ^:private run-lock (ReentrantLock.))
+;; Single-flight guard over *every* mutation of the index — index-paths!, reindex!,
+;; the background watch sweep, prune! and clear!. One at a time, so none of them can
+;; observe or overwrite another's half-finished work: a clear landing mid-index used
+;; to be undone by that run's own commits (it reported "0 removed" and left the
+;; files indexed), and a prune's forceMergeDeletes ran against a writer another
+;; thread was still adding to.
+;;
+;; The two ways to take it differ by what a caller can usefully do while it waits.
+;; The long-running writers — index-paths! and reindex! — block: they always run,
+;; just after whatever is in progress, and their HTTP stream is bounded by silence
+;; rather than by a deadline. The short ones — prune!, clear! and the sweep tick —
+;; don't: their HTTP calls carry the client's 10s budget, so blocking behind an
+;; hours-long index would time the client out and *then* mutate the index behind its
+;; back. They take it with tryLock instead; the sweep skips the tick, while prune!
+;; and clear! throw :index-busy for the caller to retry (rag.http maps it to 409).
+;;
+;; Reentrant, so sweep! can hold it across its own calls into prune! and index-paths!.
+(defonce ^:private mutation-lock (ReentrantLock.))
 
 (defn indexing?
   "-> bool
-  True while an index run (manual or sweep) holds the single-flight lock."
+  True while an index mutation (a manual index, a sweep, a prune, a clear) holds
+  the single-flight lock."
   []
-  (.isLocked run-lock))
+  (.isLocked mutation-lock))
+
+(defn- with-mutation-lock*
+  "Run `f` holding the mutation lock, taking it with tryLock and throwing an ex-info
+  {:type :index-busy} rather than waiting when another mutation has it. For the
+  short verbs whose caller is better served by an immediate \"try again\" than by a
+  connection held open for the length of an index run — see the lock's comment."
+  [what f]
+  (if-not (.tryLock mutation-lock)
+    (throw (ex-info (str what " can't run right now: an index run is in progress. "
+                         "Wait for it to finish (`otzar server watch` shows whether one "
+                         "is going) and try again.")
+                    {:type :index-busy :operation what}))
+    (try (f) (finally (.unlock mutation-lock)))))
 
 (def ^:private commit-interval-ms
   "Commit the index at least this often during a long run so files that finish
@@ -236,7 +261,7 @@
   ([paths opts] (index-paths! paths opts (constantly false) (fn [_])))
   ([paths opts cancelled?] (index-paths! paths opts cancelled? (fn [_])))
   ([paths {:keys [recursive force] :or {recursive true}} cancelled? on-progress]
-   (.lock run-lock)  ; single-flight: wait out any in-progress run, then take over
+   (.lock mutation-lock)  ; single-flight: wait out any in-progress mutation, then take over
    (try
    (let [idx    (ensure!)
          _      (ensure-dim! idx (embed/embedding-dim))  ; refuse a dim change before any embedding work
@@ -318,7 +343,7 @@
                                :chunks fchunks})
                  (recur pending (inc taken) counters dirty? last-commit))))))
        (finally (.shutdown pool))))
-   (finally (.unlock run-lock)))))
+   (finally (.unlock mutation-lock)))))
 
 (defn- ->epoch-ms
   "Coerce an mtime bound to epoch millis. Accepts a number (already millis) or an
@@ -420,24 +445,34 @@
     :dry_run  present and true only for a dry run
   Detection is disk-existence only: a moved file shows up as an orphan at its old
   path (and, once you reindex the new location, as a fresh file there). Runs on the
-  caller's thread; no embedding, just a stat() per indexed file."
+  caller's thread; no embedding, just a stat() per indexed file.
+
+  A real prune takes the mutation lock and throws :index-busy if an index run holds
+  it — its reclaim rewrites segments underneath the writer, so it cannot share the
+  index with a run in flight. A dry run touches nothing, so it stays a free read and
+  answers even mid-index."
   ([] (prune! {}))
   ([{:keys [dry-run]}]
-   (let [idx     (ensure!)
-         indexed (lucene/paths idx)
-         orphans (filterv #(not (.exists (io/file ^String %))) indexed)]
-     (when (and (seq orphans) (not dry-run))
-       (lucene/delete-by-paths! idx orphans)
-       (lucene/reclaim-deletes! idx))
-     (cond-> {:removed orphans :kept (- (count indexed) (count orphans))}
-       dry-run (assoc :dry_run true)))))
+   (let [run (fn []
+               (let [idx     (ensure!)
+                     indexed (lucene/paths idx)
+                     orphans (filterv #(not (.exists (io/file ^String %))) indexed)]
+                 (when (and (seq orphans) (not dry-run))
+                   (lucene/delete-by-paths! idx orphans)
+                   (lucene/reclaim-deletes! idx))
+                 (cond-> {:removed orphans :kept (- (count indexed) (count orphans))}
+                   dry-run (assoc :dry_run true))))]
+     (if dry-run
+       (run)
+       (with-mutation-lock* "prune" run)))))
 
 (defn sweep!
   "-> summary map
   One background watch sweep (driven by rag.watch on an interval): reconcile the
   persisted roots (rag.roots) against disk and re-index anything new or changed.
-  Single-flighted against manual /index and other sweeps via the same run lock —
-  if a run is already in progress it does nothing and returns {:skipped true}.
+  Single-flighted against every other index mutation via the same lock — if one is
+  already in progress it does nothing and returns {:skipped true}, rather than
+  making a background tick wait on (or fight with) work the user asked for.
 
   Otherwise, when at least one root is recorded:
     - Prune orphans, but ONLY when every root still exists on disk. This is the
@@ -461,7 +496,7 @@
                     extractable, so their stale chunks were dropped)
     :errors         per-file errors from the re-index"
   []
-  (if-not (.tryLock run-lock)
+  (if-not (.tryLock mutation-lock)
     {:skipped true}
     (try
       (let [all-roots (roots/read-roots)]
@@ -487,7 +522,7 @@
              :skipped_files (sum :skipped)
              :removed_files (sum :removed)
              :errors        (into [] (mapcat :errors) results)})))
-      (finally (.unlock run-lock)))))
+      (finally (.unlock mutation-lock)))))
 
 (defn clear!
   "-> {:removed_docs int, :removed_chunks int}
@@ -496,12 +531,19 @@
   index contents read just before the wipe), for the caller to report. Opens the
   index if needed, so a clear on a freshly-booted server still resets on-disk
   state. This is the supported reset after an embedding-model *dimension* change,
-  which Lucene can't apply to a live field (lucene/clear!): clear, then re-index."
+  which Lucene can't apply to a live field (lucene/clear!): clear, then re-index.
+
+  Takes the mutation lock and throws :index-busy if an index run holds it. A wipe
+  that raced a run was worse than useless: the run's own commits put the files
+  straight back, so the clear reported the counts it had removed and left an index
+  that still held them."
   []
-  (let [idx (ensure!)
-        {:keys [num_docs num_chunks]} (lucene/stats idx)]
-    (lucene/clear! idx)
-    {:removed_docs num_docs :removed_chunks num_chunks}))
+  (with-mutation-lock* "clear"
+    (fn []
+      (let [idx (ensure!)
+            {:keys [num_docs num_chunks]} (lucene/stats idx)]
+        (lucene/clear! idx)
+        {:removed_docs num_docs :removed_chunks num_chunks}))))
 
 (defn stats
   "-> {:num_docs int, :num_chunks int}
@@ -538,10 +580,17 @@
   when nothing is indexed. Backs POST /reindex."
   ([] (reindex! (constantly false) (fn [_])))
   ([cancelled? on-progress]
-   (let [ps (:paths (paths))]
-     (if (empty? ps)
-       {:indexed 0 :chunks 0 :skipped 0 :unchanged 0 :removed 0 :errors []}
-       (index-paths! ps {:recursive false :force true} cancelled? on-progress)))))
+   ;; Blocking, and held across the `paths` read as well as the rebuild: the file
+   ;; list is a snapshot of the index, so taking it before the lock would let a
+   ;; concurrent clear or prune make it stale before a single file is re-embedded.
+   ;; Reentrant, so the nested index-paths! takes it again for free.
+   (.lock mutation-lock)
+   (try
+     (let [ps (:paths (paths))]
+       (if (empty? ps)
+         {:indexed 0 :chunks 0 :skipped 0 :unchanged 0 :removed 0 :errors []}
+         (index-paths! ps {:recursive false :force true} cancelled? on-progress)))
+     (finally (.unlock mutation-lock)))))
 
 (defn close!
   "-> nil

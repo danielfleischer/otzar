@@ -50,6 +50,8 @@
 (defn- json-body [resp]
   (j/read-value (:body resp) mapper))
 
+
+
 (deftest health-ok
   (let [resp (call (req :get "/health"))]
     (is (= 200 (:status resp)))
@@ -286,3 +288,21 @@
       (let [body (json-body (call (req :delete "/index" {:forget_roots true})))]
         (is (= 2 (:removed_docs body)))
         (is (= ["/notes"] (:forgotten_roots body)))))))
+
+(deftest a-refused-clear-does-not-forget-the-roots
+  ;; Order matters: the clear is the step that can be refused, and forgetting the
+  ;; roots of an index that never got wiped is the worst of both outcomes.
+  (with-redefs [index/clear!      (fn [] (throw (ex-info "busy" {:type :index-busy})))
+                roots/forget-all! (fn [] (throw (AssertionError. "roots forgotten anyway")))]
+    (is (= 409 (:status (call (req :delete "/index" {:forget_roots true})))))))
+
+;; ── :index-busy -> 409 ──────────────────────────────────────────────────────
+
+(deftest a-busy-index-is-409-not-400
+  (testing "another mutation holds the lock: a transient conflict, not a bad request"
+    (with-redefs [index/prune! (fn [_] (throw (ex-info "prune can't run right now: an index run is in progress."
+                                                       {:type :index-busy :operation "prune"})))]
+      (let [resp (call (req :post "/prune" {}))]
+        (is (= 409 (:status resp)))
+        (is (str/includes? (:error (json-body resp)) "index run is in progress"))
+        (is (= "index-busy" (get-in (json-body resp) [:data :type])))))))

@@ -572,3 +572,69 @@
         (let [r (index/index-paths! [(.getPath dir)] {:recursive true})]
           (is (= 2 (:unchanged r)))
           (is (zero? (:removed r))))))))
+
+;; ── the mutation lock ───────────────────────────────────────────────────────
+;; Before this, clear and prune ran straight through an index in flight. A clear
+;; mid-run was the worst of them: it wiped, reported the counts it had removed, and
+;; then the run's own commits put every file straight back.
+
+(defn- during-an-index-run
+  "Start an index run that blocks inside the embedder, call `(f)` while it is in
+  flight, then let the run finish. Returns [f's value-or-thrown, the run's result]."
+  [dir f]
+  (let [gate    (promise)
+        started (promise)]
+    (with-redefs [embed/embed-documents (fn [texts & _]
+                                          (deliver started true)
+                                          @gate
+                                          (mapv (fn [_] (float-array [0.1 0.2 0.3])) texts))]
+      (let [run (future (index/index-paths! [(.getPath dir)] {:recursive true}))]
+        @started
+        (let [outcome (try {:value (f)} (catch Exception e {:thrown e}))]
+          (deliver gate true)
+          [outcome @run])))))
+
+(deftest clear-is-refused-while-an-index-run-holds-the-lock
+  (with-real-pipeline
+    (fn [dir idx]
+      (let [[outcome run] (during-an-index-run dir #(index/clear!))]
+        (testing "the clear is refused as busy rather than silently losing the race"
+          (is (nil? (:value outcome)))
+          (is (= :index-busy (:type (ex-data (:thrown outcome))))))
+        (testing "and the index run completes intact"
+          (is (= 2 (:indexed run)))
+          (is (= 2 (:num_docs (lucene/stats idx)))))))))
+
+(deftest prune-is-refused-while-an-index-run-holds-the-lock
+  (with-real-pipeline
+    (fn [dir _idx]
+      (let [[outcome _] (during-an-index-run dir #(index/prune!))]
+        (is (= :index-busy (:type (ex-data (:thrown outcome)))))))))
+
+(deftest a-dry-run-prune-still-answers-mid-index
+  ;; It mutates nothing, so refusing it would only make the preview useless exactly
+  ;; when someone wants it.
+  (with-real-pipeline
+    (fn [dir _idx]
+      (let [[outcome _] (during-an-index-run dir #(index/prune! {:dry-run true}))]
+        (is (nil? (:thrown outcome)))
+        (is (true? (:dry_run (:value outcome))))))))
+
+(deftest clear-and-prune-work-normally-when-nothing-is-running
+  (with-real-pipeline
+    (fn [dir idx]
+      (index/index-paths! [(.getPath dir)] {:recursive true})
+      (is (= {:removed [] :kept 2} (index/prune!)))
+      (is (= {:removed_docs 2 :removed_chunks 2} (index/clear!)))
+      (is (= {:num_docs 0 :num_chunks 0} (lucene/stats idx)))
+      (testing "the lock is released, so the next mutation still runs"
+        (is (= 2 (:indexed (index/index-paths! [(.getPath dir)] {:recursive true}))))))))
+
+(deftest the-sweep-still-skips-a-tick-rather-than-throwing
+  ;; The sweep shares the lock but must never surface :index-busy — a background
+  ;; tick that collides with a manual index just does nothing.
+  (with-real-pipeline
+    (fn [dir _idx]
+      (let [[outcome _] (during-an-index-run dir #(index/sweep!))]
+        (is (nil? (:thrown outcome)))
+        (is (= {:skipped true} (:value outcome)))))))

@@ -225,7 +225,8 @@ Response:
 - `forget_roots` also empties `roots.edn`, which is what makes the wipe stick:
   roots are a standing instruction to keep those trees indexed, so left in place
   the next watch sweep re-indexes everything just cleared. `forgotten_roots` then
-  lists the paths dropped.
+  lists the paths dropped. The clear runs first — it is the call that can be
+  refused — so a `409` leaves the roots alone.
 
 ### POST /query
 
@@ -338,8 +339,8 @@ persists to `watch.edn` so it survives a restart.
   per-user value set via `POST`).
 - `next_sweep_in_s` — seconds until the next scheduled sweep, straight from the
   scheduler. Absent when watch is off; `0` when a sweep is due or running.
-- `indexing` — whether an index run (manual or a sweep) holds the single-flight lock
-  right now.
+- `indexing` — whether an index mutation (a manual index, a sweep, a prune, a clear)
+  holds the single-flight lock right now.
 - `last_sweep_at` / `last_result` — the most recent sweep's time and summary, absent
   until the first sweep runs. `last_result` is `{"skipped": true}` when that sweep
   found a run already in progress, or `{"error": "..."}` when it threw.
@@ -357,8 +358,20 @@ has gone missing (an unmounted volume), so a vanished root never deletes its sub
 ## Errors
 
 Handlers return `{"error": "<message>"}` (sometimes with a `"data"` object) and a
-non-200 status: `400` for bad requests (missing `q`/`paths`, unsupported `mode`),
-`500` for server-side failures.
+non-200 status: `400` for bad requests (missing `q`/`paths`, an unsupported `mode`,
+a path that isn't on disk), `409` when another index mutation is in progress, `500`
+for server-side failures.
+
+Every mutation of the index — `POST /index`, `POST /reindex`, `POST /prune`,
+`DELETE /index`, and the background sweep — is serialised on one lock, so none can
+observe or overwrite another's half-finished work. The two long writers (`/index`,
+`/reindex`) queue behind whatever is running; their streams are bounded by silence,
+not by a deadline. The short ones (`/prune`, `DELETE /index`) do not queue — their
+callers carry a 10-second budget, so waiting out an hours-long index would time the
+client out and *then* mutate the index behind its back. They return `409` with
+`{"data": {"type": "index-busy", "operation": "clear"}}` and a message saying to
+retry. A dry-run prune mutates nothing, so it always answers. The background sweep
+simply skips its tick.
 
 A dimension change is detected up front rather than failing deep in Lucene: when
 the configured embedding model's vector dimension differs from what the index

@@ -36,13 +36,17 @@
 
 (defn- with-errors
   "Turn thrown exceptions into JSON error responses: ex-info (bad request) → 400,
-  anything else (including the not-yet-implemented Lucene core) → 500."
+  except {:type :index-busy} — another index mutation holds the single-flight lock,
+  which is a transient conflict rather than a bad request, so → 409 — and anything
+  else → 500."
   [handler]
   (fn [req]
     (try
       (handler req)
       (catch clojure.lang.ExceptionInfo e
-        (json 400 {:error (.getMessage e) :data (ex-data e)}))
+        (let [data (ex-data e)]
+          (json (if (= :index-busy (:type data)) 409 400)
+                {:error (.getMessage e) :data data})))
       (catch Throwable e
         (json 500 {:error (.getMessage e)})))))
 
@@ -216,8 +220,9 @@
   response then carries :forgotten_roots, the paths dropped."
   [req]
   (let [{:keys [forget_roots]} (read-body req)
-        ;; Clear first: forgetting the roots of an index that never got wiped
-        ;; would be the worst of both outcomes.
+        ;; Clear first — it is the one that can refuse (409 while an index run holds
+        ;; the mutation lock), and forgetting the roots of an index that never got
+        ;; wiped would be the worst of both.
         cleared (index/clear!)]
     (json 200 (cond-> cleared
                 forget_roots (assoc :forgotten_roots (:removed (roots/forget-all!)))))))

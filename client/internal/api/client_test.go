@@ -200,6 +200,30 @@ func TestRemoveRootsSendsThePaths(t *testing.T) {
 	}
 }
 
+// A 409 means another index mutation holds the lock. The message is the server's
+// advice to retry, and it has to reach the user intact rather than as a status code.
+func TestBusyIndexSurfacesTheServersRetryAdvice(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		w.Write([]byte(`{"error":"clear can't run right now: an index run is in progress. Wait for it to finish and try again.","data":{"type":"index-busy"}}`))
+	}))
+	defer srv.Close()
+
+	_, err := testClient(srv).Clear(false)
+	if err == nil {
+		t.Fatal("expected an error from a 409 response")
+	}
+	if !strings.Contains(err.Error(), "an index run is in progress") {
+		t.Fatalf("retry advice missing: %q", err)
+	}
+	for _, leak := range []string{"409", "Conflict", `"data"`} {
+		if strings.Contains(err.Error(), leak) {
+			t.Fatalf("error leaked the envelope %q: %q", leak, err)
+		}
+	}
+}
+
 // The stale-chunk fix added a counter to the index result. The CLI only prints it
 // when non-zero, so a decoding slip would be invisible rather than loud.
 func TestIndexResultDecodesRemoved(t *testing.T) {
