@@ -179,24 +179,61 @@ func TestRemoveRootsSendsThePaths(t *testing.T) {
 			t.Errorf("body did not decode: %v", err)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"removed":["/a"],"roots":[{"path":"/b","recursive":true}]}`))
+		w.Write([]byte(`{"forgotten":["/a"],"roots":[{"path":"/b","recursive":true}],` +
+			`"removed_files":["/a/one.md","/a/two.md"],"removed_chunks":7}`))
 	}))
 	defer srv.Close()
 
-	res, err := testClient(srv).RemoveRoots([]string{"/a", "/missing"})
+	res, err := testClient(srv).RemoveRoots([]string{"/a", "/missing"}, false)
 	if err != nil {
 		t.Fatalf("RemoveRoots: %v", err)
 	}
 	if len(got.Paths) != 2 || got.Paths[0] != "/a" || got.Paths[1] != "/missing" {
 		t.Errorf("server saw paths %v, want both", got.Paths)
 	}
-	// Only /a came back as removed: the caller needs that to tell the user
+	if got.DryRun {
+		t.Error("dry_run was sent on a real removal")
+	}
+	// Only /a came back as forgotten: the caller needs that to tell the user
 	// /missing was never a root, so it must not be inferred from the request.
-	if len(res.Removed) != 1 || res.Removed[0] != "/a" {
-		t.Errorf("removed = %v, want [/a]", res.Removed)
+	if len(res.Forgotten) != 1 || res.Forgotten[0] != "/a" {
+		t.Errorf("forgotten = %v, want [/a]", res.Forgotten)
+	}
+	// The content half is what the count in the confirmation is built from, so it
+	// has to survive decoding as its own thing.
+	if len(res.RemovedFiles) != 2 || res.RemovedChunks != 7 {
+		t.Errorf("dropped %v (%d chunks), want 2 files and 7 chunks",
+			res.RemovedFiles, res.RemovedChunks)
 	}
 	if len(res.Roots) != 1 || res.Roots[0].Path != "/b" {
 		t.Errorf("remaining roots = %+v, want [/b]", res.Roots)
+	}
+}
+
+// The preview behind unindex's confirmation prompt is the same request with
+// dry_run set. If the flag were dropped on the wire, the "preview" would be the
+// deletion itself — made before the user was asked.
+func TestRemoveRootsDryRunIsSentAndDecoded(t *testing.T) {
+	var raw map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+			t.Errorf("body did not decode: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"forgotten":[],"roots":[],"removed_files":["/a/x.md"],` +
+			`"removed_chunks":3,"kept_covered":2,"dry_run":true}`))
+	}))
+	defer srv.Close()
+
+	res, err := testClient(srv).RemoveRoots([]string{"/a"}, true)
+	if err != nil {
+		t.Fatalf("RemoveRoots: %v", err)
+	}
+	if raw["dry_run"] != true {
+		t.Errorf("server saw dry_run = %v, want true", raw["dry_run"])
+	}
+	if !res.DryRun || res.KeptCovered != 2 {
+		t.Errorf("decoded %+v, want DryRun and KeptCovered 2", res)
 	}
 }
 

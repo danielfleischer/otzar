@@ -256,17 +256,50 @@
 
 ;; ── DELETE /roots ───────────────────────────────────────────────────────────
 
-(deftest roots-remove-forgets-the-named-trees
-  (with-redefs [roots/remove-roots! (fn [paths] {:removed (vec paths)
-                                                 :roots   [{:path "/kept" :recursive true}]})]
+(deftest roots-remove-forgets-the-tree-and-drops-what-it-indexed
+  (with-redefs [roots/remove-roots! (fn [paths _] {:removed (vec paths)
+                                                   :roots   [{:path "/kept" :recursive true}]})
+                index/forget!       (fn [_ _] {:removed_files ["/gone/a.md" "/gone/b.md"]
+                                               :removed_chunks 9})]
     (let [resp (call (req :delete "/roots" {:paths ["/gone"]}))
           body (json-body resp)]
       (is (= 200 (:status resp)))
-      (is (= ["/gone"] (:removed body)))
-      (is (= [{:path "/kept" :recursive true}] (:roots body))))))
+      (testing "the intent half"
+        (is (= ["/gone"] (:forgotten body)))
+        (is (= [{:path "/kept" :recursive true}] (:roots body))))
+      (testing "and the content half, in the same answer"
+        (is (= ["/gone/a.md" "/gone/b.md"] (:removed_files body)))
+        (is (= 9 (:removed_chunks body)))))))
+
+(deftest roots-remove-drops-content-under-a-path-that-was-never-a-root
+  (testing "cleaning up after a tree you un-rooted earlier is the same request"
+    (with-redefs [roots/remove-roots! (fn [_ _] {:removed [] :roots []})
+                  index/forget!       (fn [_ _] {:removed_files ["/orphaned/a.md"] :removed_chunks 3})]
+      (let [body (json-body (call (req :delete "/roots" {:paths ["/orphaned"]})))]
+        (is (= [] (:forgotten body)))
+        (is (= ["/orphaned/a.md"] (:removed_files body)))))))
+
+(deftest roots-remove-forgets-nothing-on-a-dry-run
+  (testing "the preview the client confirms against must not be the change itself"
+    (with-redefs [roots/remove-roots! (fn [paths {:keys [dry-run]}]
+                                        (is dry-run "roots were rewritten on a dry run")
+                                        {:removed (vec paths) :roots []})
+                  index/forget!       (fn [_ {:keys [dry-run]}]
+                                        (is dry-run "the index was mutated on a dry run")
+                                        {:removed_files ["/gone/a.md"] :removed_chunks 2 :dry_run true})]
+      (let [body (json-body (call (req :delete "/roots" {:paths ["/gone"] :dry_run true})))]
+        (is (true? (:dry_run body)))
+        (is (= ["/gone/a.md"] (:removed_files body)))))))
+
+(deftest roots-remove-drops-the-content-before-forgetting-the-intent
+  (testing "a refused forget! (409 while indexing) must leave roots.edn alone"
+    (with-redefs [index/forget!       (fn [& _] (throw (ex-info "busy" {:type :index-busy})))
+                  roots/remove-roots! (fn [& _] (throw (AssertionError. "roots were touched")))]
+      (is (= 409 (:status (call (req :delete "/roots" {:paths ["/gone"]}))))))))
 
 (deftest roots-remove-requires-paths
-  (with-redefs [roots/remove-roots! (fn [& _] (throw (AssertionError. "should not remove")))]
+  (with-redefs [roots/remove-roots! (fn [& _] (throw (AssertionError. "should not remove")))
+                index/forget!       (fn [& _] (throw (AssertionError. "should not forget")))]
     (doseq [body [nil {} {:paths []}]]
       (let [resp (call (req :delete "/roots" body))]
         (is (= 400 (:status resp)))

@@ -7,6 +7,7 @@
   reconciliation is precisely what a stub would hide."
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.java.io :as io]
+            [clojure.string :as str]
             [rag.index :as index]
             [rag.index.lucene :as lucene]
             [rag.index.extractor :as extractor]
@@ -422,6 +423,127 @@
 
         (testing "and they stay gone — a second prune finds nothing"
           (is (= {:removed [] :kept 15} (index/prune!))))))))
+
+;; ── forget!: un-indexing a tree the user no longer wants ────────────────────
+;; The one deletion that happens on intent alone. prune! needs disk to say the
+;; file is gone; these files are present and readable, and go anyway.
+
+(defn- with-indexed-tree
+  "Create the given relative paths as real .md files under a temp dir, index one
+  chunk each into a throwaway index, and call `(f dir idx)` with index/ensure!
+  pointed at it and no roots recorded. Roots are stubbed rather than read: the
+  real read-roots would reach into the developer's own ~/.otzar/roots.edn."
+  [rel-paths f]
+  (let [dir     (temp-dir)
+        idx-dir (temp-dir)
+        files   (mapv (fn [rel]
+                        (let [file (io/file dir rel)]
+                          (.mkdirs (.getParentFile file))
+                          (doto file (spit "hello"))))
+                      rel-paths)
+        idx     (lucene/open idx-dir)]
+    (try
+      (lucene/add-chunks! idx (map chunk-for files))
+      (lucene/commit! idx)
+      (with-redefs [index/ensure!    (constantly idx)
+                    roots/read-roots (constantly [])]
+        (f dir idx))
+      (finally
+        (lucene/close idx)
+        (rm-r dir)
+        (rm-r idx-dir)))))
+
+(def ^:private a-tree
+  ["notes/a.md" "notes/b.md" "notes/c.md" "notes/d.md"
+   "notes/deep/e.md" "notes/deep/f.md"
+   "notes-old/g.md" "notes-old/h.md"
+   "other/i.md" "other/j.md" "other/k.md" "other/l.md"])
+
+(defn- abs [dir rel] (.getAbsolutePath (io/file dir rel)))
+
+(deftest forget-drops-every-file-under-the-named-tree
+  (with-indexed-tree a-tree
+    (fn [dir idx]
+      (let [before (snapshot dir)
+            r      (index/forget! [(abs dir "notes")])]
+        (is (= (sort (map #(abs dir %) ["notes/a.md" "notes/b.md" "notes/c.md" "notes/d.md"
+                                        "notes/deep/e.md" "notes/deep/f.md"]))
+               (:removed_files r)))
+        (is (= 6 (:removed_chunks r)))
+        (is (nil? (:dry_run r)))
+
+        (testing "subdirectories go with it, and only that tree"
+          (is (= (sort (map #(abs dir %) ["notes-old/g.md" "notes-old/h.md" "other/i.md"
+                                          "other/j.md" "other/k.md" "other/l.md"]))
+                 (lucene/paths idx)))
+          (is (= {:num_docs 6 :num_chunks 6} (lucene/stats idx))))
+
+        (testing "a sibling whose name merely starts the same is not swallowed"
+          (is (some #(str/includes? % "notes-old") (lucene/paths idx))))
+
+        (testing "and the files themselves are untouched on disk"
+          (is (= before (snapshot dir))))))))
+
+(deftest forget-reaches-files-no-root-covers
+  (testing "cleaning up after a tree un-rooted earlier is the whole point"
+    (with-indexed-tree a-tree
+      (fn [dir idx]
+        ;; No roots at all: these files are in the index and nothing tracks them.
+        (is (= 4 (count (:removed_files (index/forget! [(abs dir "other")])))))
+        (is (= 8 (:num_docs (lucene/stats idx))))))))
+
+(deftest forget-keeps-what-another-root-still-covers
+  (with-indexed-tree a-tree
+    (fn [dir idx]
+      (testing "a recursive root above the named path still wants those files"
+        (with-redefs [roots/read-roots (constantly [{:path (.getAbsolutePath dir) :recursive true}])]
+          (let [r (index/forget! [(abs dir "notes")])]
+            (is (= [] (:removed_files r)))
+            (is (= 12 (:num_docs (lucene/stats idx))))
+            (testing "and says so, so that \"dropped 0\" isn't mistaken for a bug"
+              (is (= 6 (:kept_covered r))))))))))
+
+(deftest forget-a-non-recursive-root-covers-only-its-immediate-children
+  (with-indexed-tree a-tree
+    (fn [dir idx]
+      (with-redefs [roots/read-roots (constantly [{:path (abs dir "notes") :recursive false}])]
+        (let [r (index/forget! [(abs dir "notes/deep")])]
+          (testing "the subdirectory is not what a non-recursive root walks"
+            (is (= 2 (count (:removed_files r))))
+            (is (zero? (:kept_covered r)))
+            (is (= 10 (:num_docs (lucene/stats idx))))))))))
+
+(deftest forget-ignores-coverage-by-the-root-being-removed
+  (testing "a root can't spare its own files from the request that removes it"
+    (with-indexed-tree a-tree
+      (fn [dir idx]
+        (with-redefs [roots/read-roots (constantly [{:path (abs dir "notes") :recursive true}])]
+          (is (= 6 (count (:removed_files (index/forget! [(abs dir "notes")]))))
+              "the named path is excluded from the roots that keep files")
+          (is (= 6 (:num_docs (lucene/stats idx)))))))))
+
+(deftest forget-dry-run-reports-without-dropping
+  (with-indexed-tree a-tree
+    (fn [dir idx]
+      (let [r (index/forget! [(abs dir "notes")] {:dry-run true})]
+        (is (= 6 (count (:removed_files r))))
+        (is (= 6 (:removed_chunks r)))
+        (is (true? (:dry_run r))))
+      (testing "nothing left the index"
+        (is (= 12 (:num_docs (lucene/stats idx))))))))
+
+(deftest forget-a-path-with-nothing-indexed-under-it-is-a-noop
+  (with-indexed-tree a-tree
+    (fn [dir idx]
+      (let [r (index/forget! [(abs dir "nowhere")])]
+        (is (= {:removed_files [] :removed_chunks 0 :kept_covered 0} r)))
+      (is (= 12 (:num_docs (lucene/stats idx)))))))
+
+(deftest forget-takes-a-file-path-too
+  (with-indexed-tree a-tree
+    (fn [dir idx]
+      (is (= [(abs dir "other/i.md")] (:removed_files (index/forget! [(abs dir "other/i.md")]))))
+      (is (= 11 (:num_docs (lucene/stats idx)))))))
 
 ;; ── the source tree is read-only ────────────────────────────────────────────
 ;; otzar reads what it indexes and writes only its own state under ~/.otzar.

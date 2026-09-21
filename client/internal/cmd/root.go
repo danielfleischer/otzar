@@ -31,5 +31,5 @@ func Execute() {
 }
 
 func init() {
-	rootCmd.AddCommand(serverCmd, adminCmd, indexCmd, listCmd, rootsCmd, queryCmd, mcpCmd)
+	rootCmd.AddCommand(serverCmd, adminCmd, indexCmd, unindexCmd, listCmd, rootsCmd, queryCmd, mcpCmd)
 }

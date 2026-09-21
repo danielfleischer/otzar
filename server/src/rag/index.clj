@@ -466,6 +466,80 @@
        (run)
        (with-mutation-lock* "prune" run)))))
 
+(defn- under?
+  "prefix:str, p:str -> bool
+  True when indexed path `p` is `prefix` itself or a file somewhere beneath it.
+  The separator is appended deliberately: a bare prefix test would make
+  \"/a/notes\" swallow \"/a/notes-old/x.md\"."
+  [^String prefix ^String p]
+  (or (= p prefix)
+      (str/starts-with? p (str prefix "/"))))
+
+(defn- still-wanted?
+  "roots:[{:path :recursive}], p:str -> bool
+  True when one of `roots` is a standing instruction to keep `p` indexed — i.e.
+  the next sweep would walk to it. A recursive root claims its whole subtree; a
+  non-recursive one claims only itself and the files directly inside it (what
+  walker/walk yields for it). Used to spare files that another root still covers
+  from a forget!, since dropping them would only cost the next sweep a re-embed."
+  [roots ^String p]
+  (boolean
+   (some (fn [{:keys [^String path recursive]}]
+           (if recursive
+             (under? path p)
+             (or (= p path)
+                 (= (.getParent (io/file p)) path))))
+         roots)))
+
+(defn forget!
+  "paths:[str], {:dry-run bool}? -> {:removed_files [str], :removed_chunks int,
+                                    :kept_covered int, :dry_run bool?}
+  Drop from the index every file at or beneath `paths` — the content half of
+  \"stop indexing this\" (rag.roots/remove-roots! is the intent half; DELETE /roots
+  does both). Unlike prune!, which only ever drops what disk says is gone, this
+  deletes files that are present and readable, because the user asked for it by
+  name.
+
+  `paths` need not be recorded roots. Un-indexing a tree and cleaning up after one
+  you un-indexed earlier are the same sentence, and only the second can reach files
+  that no root covers any more.
+
+  Files a *remaining* root still claims are kept (see still-wanted?): removing a
+  nested root shouldn't delete chunks the enclosing root would re-embed on the next
+  sweep. The caller decides which roots remain — read them before forgetting, so
+  the paths being dropped are not among them.
+
+    :removed_files  the indexed paths dropped, sorted (as lucene/paths returns them)
+    :removed_chunks how many chunks those files held
+    :kept_covered   how many matching files were spared because a remaining root
+                    still covers them — without it a \"dropped 0 files\" over a tree
+                    that plainly is indexed reads as a bug rather than an answer
+    :dry_run        present and true only for a dry run
+
+  A real forget takes the mutation lock and throws :index-busy if an index run
+  holds it — like prune!, its reclaim rewrites segments underneath the writer. A
+  dry run touches nothing, so it answers even mid-index."
+  ([paths] (forget! paths {}))
+  ([paths {:keys [dry-run]}]
+   (let [run (fn []
+               (let [idx     (ensure!)
+                     keep    (remove (comp (set (map str paths)) :path) (roots/read-roots))
+                     matched (filterv (fn [p] (some #(under? (str %) p) paths))
+                                      (lucene/paths idx))
+                     targets (filterv #(not (still-wanted? keep %)) matched)
+                     chunks  (transduce (map #(:num_chunks (lucene/doc-summary idx (sha1 %)) 0))
+                                        + 0 targets)]
+                 (when (and (seq targets) (not dry-run))
+                   (lucene/delete-by-paths! idx targets)
+                   (lucene/reclaim-deletes! idx))
+                 (cond-> {:removed_files  targets
+                          :removed_chunks chunks
+                          :kept_covered   (- (count matched) (count targets))}
+                   dry-run (assoc :dry_run true))))]
+     (if dry-run
+       (run)
+       (with-mutation-lock* "forget" run)))))
+
 (defn sweep!
   "-> summary map
   One background watch sweep (driven by rag.watch on an interval): reconcile the

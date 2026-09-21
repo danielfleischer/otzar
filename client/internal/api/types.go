@@ -106,17 +106,29 @@ type ClearResult struct {
 	ForgottenRoots []string `json:"forgotten_roots,omitempty"`
 }
 
-// RemoveRootsRequest is the body of DELETE /roots: the trees to stop tracking.
+// RemoveRootsRequest is the body of DELETE /roots: the trees to stop indexing.
+// DryRun previews what would go without forgetting or deleting anything.
 type RemoveRootsRequest struct {
-	Paths []string `json:"paths"`
+	Paths  []string `json:"paths"`
+	DryRun bool     `json:"dry_run,omitempty"`
 }
 
-// RemoveRootsResult is the body returned by DELETE /roots: which of the named
-// paths were actually recorded as roots, and the roots that remain. It touches
-// only roots.edn — chunks indexed under those paths stay in the index.
+// RemoveRootsResult is the body returned by DELETE /roots. Un-indexing a tree is
+// two things at once, and this reports both: Forgotten names which of the given
+// paths were recorded roots (Roots is what remains), while RemovedFiles and
+// RemovedChunks are the index contents dropped from under them. A path that was
+// never a root still drops what is indexed beneath it, so Forgotten can be empty
+// while RemovedFiles is not.
 type RemoveRootsResult struct {
-	Removed []string `json:"removed"`
-	Roots   []Root   `json:"roots"`
+	Forgotten     []string `json:"forgotten"`
+	Roots         []Root   `json:"roots"`
+	RemovedFiles  []string `json:"removed_files"`
+	RemovedChunks int      `json:"removed_chunks"`
+	// KeptCovered counts files under the named paths that were left in the index
+	// because a remaining root still covers them. Without it, "dropped 0 files"
+	// over a tree that is plainly indexed reads as a bug rather than an answer.
+	KeptCovered int  `json:"kept_covered"`
+	DryRun      bool `json:"dry_run,omitempty"`
 }
 
 // QueryRequest is the body of POST /query.

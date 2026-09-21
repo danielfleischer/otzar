@@ -2,8 +2,10 @@
   "Ring/reitit handlers: /health, /stats, /paths, /roots (GET list, DELETE forget),
   /index (POST add, DELETE clear), /reindex, /prune, /query, /document/:id,
   /watch (GET status, POST toggle), /shutdown.
-  Deletion verbs: /prune drops chunks for source files gone from disk; DELETE /index
-  wipes the whole index.
+  Three deletion verbs, and they don't overlap: /prune drops chunks for source files
+  gone from disk, DELETE /roots drops a tree the user no longer wants indexed (its
+  files are still there — this is the only verb that deletes on intent alone), and
+  DELETE /index wipes everything.
   /index and /reindex share one streaming body (indexing-stream) but differ in what
   they mean: /index is a request to keep some paths indexed, and records them as
   roots; /reindex rebuilds what is already indexed and records nothing."
@@ -84,19 +86,43 @@
   (json 200 {:roots (roots/read-roots)}))
 
 (defn- roots-remove-handler
-  "DELETE /roots — stop tracking the given trees. Body {\"paths\": [..]}. Returns
-  {:removed [path] :roots [{:path :recursive}]}: which of the named paths were
-  actually recorded, and the roots that remain.
+  "DELETE /roots — stop indexing the given trees. Body {\"paths\": [..],
+  \"dry_run\": bool?}. Returns
 
-  This forgets an *intent*; it indexes and un-indexes nothing. The chunks already
-  stored under those paths stay searchable — POST /prune is what drops the ones
-  whose files are gone. Unvalidated on purpose: a root worth forgetting is often
-  one whose directory no longer exists."
+    {:forgotten [path]      the named paths that were recorded roots
+     :roots [{:path :recursive}]  the roots that remain
+     :removed_files [path]  indexed files dropped from the index
+     :removed_chunks n      how many chunks they held
+     :dry_run true?}        present only for a preview
+
+  Both halves of one sentence: the root is forgotten (rag.roots/remove-roots!) and
+  the content under it is dropped (rag.index/forget!). Un-indexing a tree and
+  cleaning up after one un-indexed earlier are the same request, so `paths` need
+  not be recorded roots — a path that is no root still drops whatever is indexed
+  beneath it, and :forgotten simply comes back empty. Files another remaining root
+  still covers are kept; see rag.index/forget!.
+
+  Unvalidated on purpose: a root worth forgetting is often one whose directory no
+  longer exists (and then there is nothing on disk to re-walk, but its chunks are
+  still in the index, which is exactly what this drops).
+
+  Order matters. forget! runs first because it is the half that can refuse (409
+  while an index run holds the mutation lock); forgetting the intent while its
+  content stayed would be the worst of both outcomes. It reads the roots itself, so
+  it must run before roots.edn is rewritten — the paths being dropped are still
+  roots at that point, and a root being removed must not spare its own files.
+
+  Deleting a present, readable file is something only the user can ask for, so the
+  client confirms first — with dry_run true nothing is written and the same shape
+  comes back, which is what it confirms against."
   [req]
-  (let [{:keys [paths]} (read-body req)]
+  (let [{:keys [paths dry_run]} (read-body req)]
     (if (empty? paths)
       (json 400 {:error "removing roots requires a non-empty \"paths\" array"})
-      (json 200 (roots/remove-roots! paths)))))
+      (let [dropped (index/forget! paths {:dry-run dry_run})
+            {:keys [removed roots]} (roots/remove-roots! paths {:dry-run dry_run})]
+        (json 200 (-> dropped
+                      (assoc :forgotten removed :roots roots)))))))
 
 (def ^:private heartbeat-secs
   "How often, in seconds, to poke the response socket while indexing so we notice

@@ -12,7 +12,7 @@ Status legend: ✅ implemented · ⬜ planned (milestone in parens).
 | GET    | `/stats`        | ✅     | `{num_docs, num_chunks}`                                                                                                               |
 | GET    | `/paths`        | ✅     | `{count, paths}` — distinct indexed source files (`otzar list`, MCP `list_indexed_paths`)                                              |
 | GET    | `/roots`        | ✅     | `{roots: [{path, recursive}]}` — the trees asked for, as recorded in `roots.edn` (`otzar index --now` posts them back to `/index`)     |
-| DELETE | `/roots`        | ✅     | `{paths}` → `{removed, roots}` — stop tracking those trees (`otzar roots remove`); indexes and un-indexes nothing                      |
+| DELETE | `/roots`        | ✅     | `{paths, dry_run?}` → `{forgotten, roots, removed_files, removed_chunks}` — the inverse of `/index` (`otzar unindex`): drop what is indexed beneath those paths and forget any of them that are roots |
 | POST   | `/shutdown`     | ✅     | `{ok: true}`, then the process exits                                                                                                   |
 | POST   | `/index`        | ✅     | `{paths, recursive}` → `{indexed, ...}`; incremental — re-run to skip unchanged files and replace changed ones                         |
 | POST   | `/query`        | ✅     | `{q, k, mode, filters, fusion}` → `{hits}`; `mode` hybrid (default)/keyword/vector                                                     |
@@ -120,25 +120,49 @@ thread sees the old contents or the new ones and never a truncated file — whic
 Request:
 
 ```json
-{"paths": ["/Users/me/old-notes"]}
+{"paths": ["/Users/me/old-notes"], "dry_run": false}
 ```
 
 Response:
 
 ```json
-{"removed": ["/Users/me/old-notes"],
- "roots":   [{"path": "/Users/me/notes", "recursive": true}]}
+{"forgotten":      ["/Users/me/old-notes"],
+ "roots":          [{"path": "/Users/me/notes", "recursive": true}],
+ "removed_files":  ["/Users/me/old-notes/a.md", "/Users/me/old-notes/b.md"],
+ "removed_chunks": 41,
+ "kept_covered":   0}
 ```
 
-Stop tracking those trees (`otzar roots remove`), so the watch sweep no longer
-re-scans them. This forgets an *intent* and changes no content: chunks already
-indexed under those paths stay searchable, and `POST /prune` is what drops the ones
-whose files are gone.
+Stop indexing those paths (`otzar unindex`): forget them as roots, so the
+watch sweep no longer re-scans them, **and** drop what is indexed beneath them.
+Both halves of one sentence — the response reports them separately because they
+are separate outcomes. Source files on disk are never touched.
 
-`removed` names only the paths that were actually recorded, so a caller can tell
+This is the only verb that deletes on intent alone. `POST /prune` needs disk to say
+a file is gone; `DELETE /index` wipes everything; neither can un-index a tree that
+is still sitting there.
+
+`paths` need not be recorded roots. Cleaning up after a tree you stopped indexing
+earlier is the same request, and only this reaches files no root covers any more —
+so `forgotten` can come back empty while `removed_files` is not. Files that a
+*remaining* root still covers are kept, since the next sweep would index them
+again; the roots being removed never spare their own files. `kept_covered` counts
+those — without it, `removed_files: []` over a tree that plainly is indexed reads
+as a bug rather than as an answer.
+
+`forgotten` names only the paths that were actually recorded, so a caller can tell
 the user which arguments matched nothing. The paths are deliberately not validated
-— a root worth forgetting is usually one whose directory has been deleted or
-unmounted. A missing or empty `paths` is a `400`.
+— a tree worth forgetting is often one whose directory has been deleted or
+unmounted, and its chunks are exactly what this drops. A missing or empty `paths`
+is a `400`.
+
+`dry_run: true` writes nothing and answers with the same shape plus `"dry_run":
+true` — what *would* be forgotten and dropped. The CLI confirms against that before
+deleting anything.
+
+Ordering, for reimplementers: the content is dropped first. It is the half that can
+refuse (`409` while an index run holds the mutation lock), and forgetting the intent
+while its content stayed would be the worst of both outcomes.
 
 ### POST /index
 

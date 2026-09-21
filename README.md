@@ -111,7 +111,8 @@ otzar query -k 5 -e md,txt -p ~/notes/ "topic"    # top-5, filtered
 
 otzar list                          # every indexed path, one per line (alias: ls)
 otzar roots list                    # every tree you asked to keep indexed
-otzar roots remove ~/old-notes      # stop re-scanning a tree (leaves the index alone)
+otzar unindex ~/old-notes           # the inverse of index: drop a tree from the index and
+                                    #   forget its root (your files on disk are untouched)
 
 otzar admin stats                   # documents and chunks in the index
 otzar admin prune                   # drop indexed files that no longer exist

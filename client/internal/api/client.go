@@ -341,12 +341,14 @@ func (c *Client) Clear(forgetRoots bool) (*ClearResult, error) {
 	return &r, nil
 }
 
-// RemoveRoots sends DELETE /roots to stop tracking the given trees. It forgets an
-// intent and indexes nothing: chunks already stored under those paths stay
-// searchable, and Prune is what drops the ones whose files are gone.
-func (c *Client) RemoveRoots(paths []string) (*RemoveRootsResult, error) {
+// RemoveRoots sends DELETE /roots to stop indexing the given trees: it forgets
+// them as roots and drops what is indexed beneath them. The paths need not be
+// recorded roots — cleaning up after a tree you stopped indexing earlier is the
+// same request. With dryRun the server changes nothing and reports what would go,
+// which is what the confirmation prompt is built from.
+func (c *Client) RemoveRoots(paths []string, dryRun bool) (*RemoveRootsResult, error) {
 	var r RemoveRootsResult
-	if err := c.deleteJSON("/roots", RemoveRootsRequest{Paths: paths}, &r); err != nil {
+	if err := c.deleteJSON("/roots", RemoveRootsRequest{Paths: paths, DryRun: dryRun}, &r); err != nil {
 		return nil, err
 	}
 	return &r, nil

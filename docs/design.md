@@ -234,12 +234,32 @@ response shapes; the table below is the map.
 | POST   | `/index`        | Index paths (incremental; streams progress as NDJSON)   |
 | POST   | `/reindex`      | Re-embed everything already indexed (same NDJSON stream) |
 | DELETE | `/index`        | Wipe the whole index                                    |
+| DELETE | `/roots`        | Stop indexing a tree: forget the root, drop its files   |
 | POST   | `/prune`        | Drop chunks for source files gone from disk             |
 | POST   | `/query`        | `{q, k, mode, filters, fusion}` → `{hits}`              |
 | GET    | `/document/:id` | One chunk (by chunk `id`) or a whole file (by `doc_id`) |
 | GET    | `/watch`        | Background auto-reindex state                           |
 | POST   | `/watch`        | Toggle it / set the interval                            |
 | POST   | `/shutdown`     | `{ok: true}`, then the process exits                    |
+
+Three verbs delete, and the boundary between them is *who decided*. `POST /prune`
+deletes what disk says is gone. `DELETE /index` deletes everything, on request.
+`DELETE /roots` is the only one that deletes files which are present and readable,
+and it does so because the user named them — which is why it is also the only one
+the client confirms file-by-count before sending.
+
+For two months there was no third verb, and the gap was invisible because
+`roots remove` only ever edited `roots.edn`: un-indexing a tree left its files in
+the index, reachable by search, invisible to the sweep, and counted by `otzar
+list` forever. A limitation had been written down as a boundary. The rule it cost
+us: when a verb removes an intent, ask what happens to the content that intent
+created, and answer it in the same verb.
+
+The verb is `otzar unindex`, not `roots remove`, for the same reason. It was
+briefly the latter, and the case that needed it most read as nonsense: the
+stranded tree was no longer a root, so "remove this root" named something that
+didn't exist. A root is a side effect of `index`, so its removal is a side effect
+of `unindex`; `otzar roots` is left as a read-only view.
 
 `otzar index --now` is composed in the client rather than given a route of its own:
 it fetches `/roots`, prunes, and posts the trees back to `POST /index`. Re-scanning
@@ -339,7 +359,8 @@ otzar index <path>... [-r] [-f]      # POST /index; -r recursive, -f force re-em
 otzar index --now                    # re-scan the recorded roots (GET /roots -> POST /index)
 otzar list                           # GET /paths — one absolute path per line (alias: ls)
 otzar roots list                     # GET /roots — the trees asked for (alias: ls)
-otzar roots remove <path>...         # DELETE /roots — stop re-scanning a tree (alias: rm)
+otzar unindex <path>... [--yes] [--dry-run]   # DELETE /roots — the inverse of index: drop
+                                     #   what is indexed beneath, forget any root
 otzar query "..." [-k N] [-m hybrid|vector|keyword] [-e md,txt] [-p PREFIX] [--after DATE]
 otzar admin stats                    # GET /stats — index size (docs, chunks)
 otzar admin prune [--dry-run]        # POST /prune — drop orphaned files

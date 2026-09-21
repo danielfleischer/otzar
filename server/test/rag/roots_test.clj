@@ -107,6 +107,22 @@
       (is (= ["/vanished/volume"] (:removed (roots/remove-roots! ["/vanished/volume"]))))
       (is (= [] (roots/read-roots))))))
 
+(deftest a-dry-run-answers-the-same-and-writes-nothing
+  ;; The client confirms against this preview before deleting anything, so the
+  ;; preview has to be the real answer — and must not itself be the change.
+  (with-temp-roots
+    (fn []
+      (roots/add-roots! ["/a" "/b"] true)
+      (let [before (slurp config/roots-file)
+            dry    (roots/remove-roots! ["/b" "/never-added"] {:dry-run true})]
+        (is (= ["/b"] (:removed dry)))
+        (is (= ["/a"] (mapv :path (:roots dry))))
+        (testing "roots.edn is byte-for-byte what it was"
+          (is (= before (slurp config/roots-file))))
+        (testing "and the real call then gives the answer the preview promised"
+          (is (= dry (roots/remove-roots! ["/b" "/never-added"])))
+          (is (= ["/a"] (mapv :path (roots/read-roots)))))))))
+
 (deftest forget-all-empties-the-set
   (with-temp-roots
     (fn []
