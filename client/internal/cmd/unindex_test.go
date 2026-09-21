@@ -35,13 +35,17 @@ func (s *rootsServer) sent() []bool {
 }
 
 // stageRoots starts s and publishes its port the way stageServer does, so
-// client() finds it without booting anything.
+// client() and maintenanceClient() both find it without booting anything.
 func stageRoots(t *testing.T, s *rootsServer) {
 	t.Helper()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/health":
 			w.WriteHeader(http.StatusOK)
+		case r.URL.Path == "/prune" && r.Method == http.MethodPost:
+			time.Sleep(s.delay) // a real prune reclaims too
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"removed":[],"kept":0}`))
 		case r.URL.Path == "/roots" && r.Method == http.MethodDelete:
 			var req api.RemoveRootsRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
@@ -278,5 +282,69 @@ func TestReportAttributesDroppedFilesToTheirPath(t *testing.T) {
 	}
 	if strings.Contains(stderr, "/t/notes-old") {
 		t.Errorf("/t/notes-old dropped a file and must not be reported as a miss; stderr %q", stderr)
+	}
+}
+
+// ── the deadline ────────────────────────────────────────────────────────────
+
+// The bug a user hit: a real unindex reclaims deleted documents, which on a real
+// index outlasts the default budget — the server finished, the client reported
+// "context deadline exceeded". Shrink the default so the difference shows in
+// milliseconds: the plain client gives up, the maintenance client waits.
+func TestMaintenanceClientOutlastsTheDefaultDeadline(t *testing.T) {
+	isolate(t)
+	s := &rootsServer{real: body(false), delay: 200 * time.Millisecond}
+	stageRoots(t, s)
+
+	old := api.DefaultTimeout
+	api.DefaultTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { api.DefaultTimeout = old })
+
+	plain, err := client()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plain.RemoveRoots([]string{"/t"}, false); err == nil ||
+		!strings.Contains(err.Error(), "deadline exceeded") {
+		t.Fatalf("control: the default client should time out here, got %v", err)
+	}
+
+	m, err := maintenanceClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.RemoveRoots([]string{"/t"}, false); err != nil {
+		t.Errorf("maintenance client gave up on a slow reclaim: %v", err)
+	}
+}
+
+// And the commands that reclaim must actually use it — the fix is one word in
+// each RunE, and one word is easy to revert.
+func TestUnindexWaitsOutASlowReclaim(t *testing.T) {
+	isolate(t)
+	s := &rootsServer{real: body(false), delay: 200 * time.Millisecond}
+	stageRoots(t, s)
+	unindexFlags(t, false, true)
+
+	old := api.DefaultTimeout
+	api.DefaultTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { api.DefaultTimeout = old })
+
+	if _, _, err := runUnindex(t, "/t"); err != nil {
+		t.Errorf("unindex gave up on a slow reclaim: %v", err)
+	}
+}
+
+func TestPruneWaitsOutASlowReclaim(t *testing.T) {
+	isolate(t)
+	stageRoots(t, &rootsServer{delay: 200 * time.Millisecond})
+
+	old := api.DefaultTimeout
+	api.DefaultTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { api.DefaultTimeout = old })
+
+	pruneDryRun, pruneJSON = false, false
+	if _, _, err := capture(t, func() error { return pruneCmd.RunE(pruneCmd, nil) }); err != nil {
+		t.Errorf("prune gave up on a slow reclaim: %v", err)
 	}
 }

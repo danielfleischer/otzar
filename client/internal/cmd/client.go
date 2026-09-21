@@ -34,6 +34,21 @@ func client() (*api.Client, error) {
 	return api.New()
 }
 
+// maintenanceClient is client() without a total deadline, for the verbs that
+// reclaim deleted documents (unindex, prune). A reclaim rewrites every segment
+// that carries deletes — on a real index that is a vector file in the hundreds of
+// megabytes and its HNSW graph, which takes well past the default budget. A
+// deadline could not bound that work anyway: the server finishes regardless, so
+// the only thing it bounded was the client's patience, turning a completed unindex
+// into "context deadline exceeded". The cost is proportional to the index, not
+// open-ended; Ctrl-C remains the way out.
+func maintenanceClient() (*api.Client, error) {
+	if err := ensureServer(); err != nil {
+		return nil, err
+	}
+	return api.NewWithTimeout(0)
+}
+
 // ensureServer boots the server unless one is already healthy.
 //
 // The health check up front is what makes the notice honest. Start already

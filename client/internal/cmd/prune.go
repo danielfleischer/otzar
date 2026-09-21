@@ -24,7 +24,7 @@ the new location to pick it up again.
 Use --dry-run to list the orphans without deleting anything.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := client()
+		c, err := maintenanceClient()
 		if err != nil {
 			return err
 		}

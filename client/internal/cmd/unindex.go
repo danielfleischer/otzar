@@ -49,7 +49,7 @@ asks for confirmation first; --yes skips the prompt and --dry-run shows what
 would go without touching anything.`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := client()
+		c, err := maintenanceClient()
 		if err != nil {
 			return err
 		}

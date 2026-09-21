@@ -58,10 +58,14 @@ type Client struct {
 	stall   time.Duration
 }
 
+// DefaultTimeout is New's total budget for a unary request. A variable rather
+// than a literal so a test can shrink it and observe a deadline in milliseconds.
+var DefaultTimeout = 10 * time.Second
+
 // New builds a Client pointed at the currently running server, or errors if no
 // port file is present (i.e. the server isn't running).
 func New() (*Client, error) {
-	return NewWithTimeout(10 * time.Second)
+	return NewWithTimeout(DefaultTimeout)
 }
 
 // NewWithTimeout is New with an explicit total budget for unary (non-streaming)
