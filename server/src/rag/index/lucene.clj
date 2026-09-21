@@ -172,8 +172,19 @@
   because `open` sets forceMergeDeletesPctAllowed to 0 — at Lucene's default of 10%
   a lightly-deleted segment is skipped and the prune never sticks (see `open`).
   Rewriting whole segments is an occasional-maintenance cost (the prune path), not
-  something for a hot path."
+  something for a hot path.
+
+  The leading commit is not redundant. delete-by-paths! only *buffers* its deletes,
+  and the segment-eligibility check inside forceMergeDeletes reads each segment's
+  applied delete count — buffered deletes are invisible to it, so the segment scores
+  as clean and is skipped, expunging nothing. (Deleting a single document happened
+  to survive that: the one case the prune test covered, which is why this held
+  together for two months while a multi-file prune silently left every path it had
+  just dropped in the term dictionary, to be reported as an orphan again on the next
+  sweep, forever.) Committing first applies them, so the merge sees what it is meant
+  to reclaim."
   [{:keys [^IndexWriter writer ^SearcherManager manager]}]
+  (.commit writer)
   (.forceMergeDeletes writer true)
   (.commit writer)
   (.maybeRefreshBlocking manager))

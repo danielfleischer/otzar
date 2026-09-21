@@ -401,6 +401,28 @@
     (fn [_files _idx]
       (is (= {:removed [] :kept 0} (index/prune!))))))
 
+;; ── a multi-file prune actually sticks ──────────────────────────────────────
+
+(deftest prune-sticks-when-more-than-one-file-is-gone
+  ;; The single-file prune above passed for two months while this did not:
+  ;; delete-by-paths! buffers its deletes, and forceMergeDeletes skipped a segment
+  ;; whose deletes were still buffered, expunging nothing. The chunks went, but
+  ;; every path stayed in the term dictionary — so `otzar list` kept naming files
+  ;; that were no longer indexed and the next sweep pruned them all over again.
+  (with-indexed-files 20
+    (fn [files idx]
+      (let [[gone kept] (split-at 5 files)
+            gone-paths  (sort (map #(.getAbsolutePath ^File %) gone))]
+        (run! #(.delete ^File %) gone)
+        (is (= gone-paths (:removed (index/prune!))))
+
+        (testing "the term dictionary agrees with what is actually indexed"
+          (is (= (sort (map #(.getAbsolutePath ^File %) kept)) (lucene/paths idx)))
+          (is (= {:num_docs 15 :num_chunks 15} (lucene/stats idx))))
+
+        (testing "and they stay gone — a second prune finds nothing"
+          (is (= {:removed [] :kept 15} (index/prune!))))))))
+
 ;; ── the source tree is read-only ────────────────────────────────────────────
 ;; otzar reads what it indexes and writes only its own state under ~/.otzar.
 ;; These run the real walk → extract → segment → chunk pipeline over a real tree
