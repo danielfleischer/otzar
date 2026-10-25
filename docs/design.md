@@ -178,6 +178,7 @@ the sidecar only if standalone-sentence quality (not chunking) ever matters.
 | `text`         | `TextField` (stored, indexed)             | Chunk text (BM25 keyword search)       |
 | `embedding`    | `KnnFloatVectorField` (cosine)            | Dense vector (1024-dim for `bge-m3`)   |
 | `content_sha1` | `StoredField`                             | sha1 of the extracted text (§4.3)      |
+| `content_key`  | `StringField` (indexed, not stored)       | Same hash, searchable: finds a moved file's vectors (§4.3) |
 | `model_spec`   | `StoredField`                             | Embedding-model identity, `name@digest/dim` (§4.3) |
 | `tags`         | —                                         | Reserved; nothing writes or filters on it yet |
 
@@ -208,6 +209,11 @@ tracking has no citation span.
 - Change detection is two-stage: an unchanged mtime skips the file outright, and a
   bumped mtime still compares `content_sha1` against the indexed text before
   re-embedding, so touching a file costs an extraction, not a model run.
+- A moved or renamed file is a new `doc_id` with no prior, but its content may
+  already be indexed under the old path: before embedding, its chunks are looked
+  up by `content_key` (the indexed copy of `content_sha1`) + `model_spec`, and if every chunk's text is found, those
+  vectors are reused. That is why `index --now` and the watch sweep index first
+  and prune after — pruning first would drop the vectors the new path needs.
 - A chunk's `model_spec` records the embedding model's identity and dimension, so a
   model change invalidates its vectors instead of reading as unchanged.
 - A *dimension* change is a different matter: Lucene cannot apply it to a live

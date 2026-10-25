@@ -3,7 +3,9 @@
             [clojure.java.io :as io]
             [rag.index.lucene :as lucene])
   (:import [java.nio.file Files]
-           [java.nio.file.attribute FileAttribute]))
+           [java.nio.file.attribute FileAttribute]
+           [org.apache.lucene.document Document Field$Store StoredField StringField]
+           [org.apache.lucene.index IndexWriter]))
 
 (def ^:dynamic *idx* nil)
 
@@ -104,3 +106,49 @@
     (lucene/commit! *idx*)
     (is (= {:num_docs 1 :num_chunks 1} (lucene/stats *idx*)))
     (is (= ["/c.md"] (lucene/paths *idx*)))))
+
+(deftest vectors-by-content-finds-a-file-s-vectors-by-its-hash
+  ;; Two files: a two-chunk one, and one embedded by another model, whose
+  ;; vectors must not be reused under the current one.
+  (let [chunk (fn [doc-id path i sha spec v]
+                (assoc (mk-chunk doc-id path i)
+                       :text (str "chunk " i) :content_sha1 sha :model_spec spec
+                       :embedding (float-array v)))]
+    (lucene/add-chunks! *idx* [(chunk "d1" "/a.md" 0 "h1" "m1" [1 0 0])
+                               (chunk "d1" "/a.md" 1 "h1" "m1" [0 1 0])
+                               (chunk "d2" "/b.md" 0 "h2" "m0" [0 0 1])])
+    (lucene/commit! *idx*)
+    (testing "every chunk of the matching content comes back, keyed by its text"
+      (let [m (lucene/vectors-by-content *idx* "h1" "m1")]
+        (is (= #{"chunk 0" "chunk 1"} (set (keys m))))
+        (is (= [1.0 0.0 0.0] (vec (get m "chunk 0"))))
+        (is (= [0.0 1.0 0.0] (vec (get m "chunk 1"))))))
+    (testing "vectors from another embedding model are not reused"
+      (is (nil? (lucene/vectors-by-content *idx* "h2" "m1"))))
+    (testing "unknown content -> nil"
+      (is (nil? (lucene/vectors-by-content *idx* "nope" "m1"))))
+    (testing "deleted docs don't count"
+      (lucene/delete-by-paths! *idx* ["/a.md"])
+      (lucene/commit! *idx*)
+      (is (nil? (lucene/vectors-by-content *idx* "h1" "m1"))))))
+
+(deftest an-index-from-before-content-key-still-takes-writes
+  ;; An index written by an earlier version has content_sha1 as a stored-only
+  ;; field. Lucene fixes a field's index options once it exists, so writing that
+  ;; field as indexed failed every index run on such an index ("cannot change
+  ;; field content_sha1 from index options=NONE ..."). Write a doc the old way,
+  ;; then index on top of it.
+  (let [^IndexWriter w (:writer *idx*)]
+    (.addDocument w (doto (Document.)
+                      (.add (StringField. "doc_id" "old" Field$Store/YES))
+                      (.add (StringField. "path" "/old.md" Field$Store/YES))
+                      (.add (StoredField. "content_sha1" "h0"))))
+    (lucene/commit! *idx*))
+  (lucene/add-chunks! *idx* [(assoc (mk-chunk "d1" "/a.md" 0)
+                                    :content_sha1 "h1" :model_spec "m1"
+                                    :embedding (float-array [1 0 0]))])
+  (lucene/commit! *idx*)
+  (testing "the new chunk is written and findable by content"
+    (is (= #{"chunk 0 of /a.md"} (set (keys (lucene/vectors-by-content *idx* "h1" "m1"))))))
+  (testing "the old doc, which has no content_key, just isn't found by content"
+    (is (nil? (lucene/vectors-by-content *idx* "h0" nil)))))

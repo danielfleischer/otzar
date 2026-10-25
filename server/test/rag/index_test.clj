@@ -132,9 +132,11 @@
          (finally (.delete file)))))
 
 ;; The extract/segment/chunk/embed pipeline is fixed for every case; only
-;; lucene/doc-meta (the prior indexed state) and the force flag vary.
+;; lucene/doc-meta (the prior indexed state) and the force flag vary. Nothing is
+;; indexed under another path, so the moved-content lookup always misses.
 (defn- run-file->chunks [prior file force?]
   (with-redefs [lucene/doc-meta        (constantly prior)
+                lucene/vectors-by-content (constantly nil)
                 extractor/extract       (constantly text)
                 segmenter/segment       (constantly [{:text text :loc 1}])
                 chunker/pack            (constantly [{:chunk_idx 0 :text text
@@ -173,6 +175,46 @@
       (testing "force? re-embeds regardless of an otherwise-unchanged file"
         (let [prior {:model_spec spec :mtime mtime}]
           (is (= 1 (count (run-file->chunks prior file true)))))))))
+
+;; A file at a path with no prior may be content already indexed under another
+;; (moved or renamed): lucene/vectors-by-content answers by content hash + spec.
+(defn- run-moved [file lookup force?]
+  (let [embedded (atom 0)
+        r (with-redefs [lucene/doc-meta           (constantly nil)
+                        lucene/vectors-by-content lookup
+                        extractor/extract         (constantly text)
+                        segmenter/segment         (constantly [{:text text :loc 1}])
+                        chunker/pack              (constantly [{:chunk_idx 0 :text text
+                                                                :loc_start 1 :loc_end 1}])
+                        embed/embed-documents     (fn [texts & _]
+                                                    (swap! embedded inc)
+                                                    (mapv (fn [_] (float-array [0.5])) texts))]
+            (#'index/file->chunks :comp spec file (constantly false) (fn [_]) force?))]
+    [r @embedded]))
+
+(deftest file->chunks-reuses-the-vectors-of-moved-content
+  (with-file
+    (fn [file _mtime]
+      (testing "content already indexed under another path -> its vectors, no embed"
+        (let [asked     (atom nil)
+              [r n]     (run-moved file
+                                   (fn [_ csha s] (reset! asked [csha s]) {text (float-array [0.9])})
+                                   false)]
+          (is (= [(#'index/sha1 text) spec] @asked))
+          (is (zero? n))
+          (is (= [(float 0.9)] (vec (:embedding (first r)))))
+          (testing "stamped as this path's chunks"
+            (is (= (.getAbsolutePath file) (:path (first r))))
+            (is (= (#'index/sha1 (.getAbsolutePath file)) (:doc_id (first r)))))))
+      (testing "a chunk whose text isn't found -> embed the file"
+        (let [[_ n] (run-moved file (constantly {"some other chunk" (float-array [0.9])}) false)]
+          (is (= 1 n))))
+      (testing "nothing found -> embed the file"
+        (let [[_ n] (run-moved file (constantly nil) false)]
+          (is (= 1 n))))
+      (testing "force? embeds without looking"
+        (let [[_ n] (run-moved file (fn [& _] (throw (AssertionError. "should not look up"))) true)]
+          (is (= 1 n)))))))
 
 (deftest file->chunks-skips-unsupported-files
   (with-file
@@ -222,6 +264,20 @@
             (is (= 3 (:unchanged r)))
             (testing "the present root is re-indexed with its recursive flag"
               (is (= [[[(.getPath dir)] {:recursive true}]] @calls))))))
+      (finally (.delete dir)))))
+
+(deftest sweep-indexes-before-it-prunes
+  ;; A moved file's old chunks are what its new path reuses vectors from, so the
+  ;; prune that drops them has to come second.
+  (let [dir (temp-dir)]
+    (try
+      (let [calls (atom [])]
+        (with-redefs [roots/read-roots   (constantly [{:path (.getPath dir) :recursive true}])
+                      index/prune!       (fn [_] (swap! calls conj :prune) {:removed []})
+                      index/index-paths! (fn [_ _] (swap! calls conj :index)
+                                           {:indexed 0 :chunks 0 :unchanged 0 :skipped 0 :errors []})]
+          (index/sweep!)
+          (is (= [:index :prune] @calls))))
       (finally (.delete dir)))))
 
 (deftest sweep-skips-prune-when-a-root-is-missing
@@ -716,6 +772,41 @@
         (let [r (index/index-paths! [(.getPath dir)] {:recursive true})]
           (is (= 2 (:unchanged r)))
           (is (zero? (:removed r))))))))
+
+(deftest a-moved-or-renamed-file-is-not-re-embedded
+  (with-bigger-tree 6
+    (fn [dir idx]
+      (index/index-paths! [(.getPath dir)] {:recursive true})
+      (let [sub      (doto (io/file dir "sub") (.mkdirs))
+            moves    {(io/file dir "f0.md") (io/file sub "moved-and-renamed.md")
+                      (io/file dir "f1.md") (io/file dir "renamed.md")}
+            embedded (atom 0)]
+        (doseq [[from to] moves] (.renameTo ^File from to))
+        (with-redefs [roots/read-roots      (constantly [{:path (.getPath dir) :recursive true}])
+                      embed/embed-documents (fn [texts & _]
+                                              (swap! embedded inc)
+                                              (mapv (fn [_] (float-array [0.1 0.2 0.3])) texts))]
+          (let [r (index/sweep!)]
+            (testing "the new paths are indexed without calling the embedder"
+              (is (= 2 (:indexed r)))
+              (is (zero? @embedded)))
+            (testing "the old paths are pruned, the new ones listed"
+              (is (= (set (map #(.getAbsolutePath ^File %) (keys moves))) (set (:pruned r))))
+              (is (= 6 (:num_docs (lucene/stats idx))))
+              (is (every? (set (lucene/paths idx)) (map #(.getAbsolutePath ^File %) (vals moves)))))
+            (testing "and the carried vectors are searchable at the new path"
+              (let [hits (lucene/vector-search idx (float-array [0.1 0.2 0.3]) 10 nil)]
+                (is (some #{(.getAbsolutePath ^File (io/file dir "renamed.md"))} (map :path hits)))))))
+        (testing "an edited file still re-embeds"
+          (reset! embedded 0)
+          (with-redefs [embed/embed-documents (fn [texts & _]
+                                                (swap! embedded inc)
+                                                (mapv (fn [_] (float-array [0.1 0.2 0.3])) texts))]
+            (let [f (io/file dir "renamed.md")]
+              (spit f "Something new entirely.\n")
+              (.setLastModified f (+ 100000 (.lastModified f)))
+              (index/index-paths! [(.getPath dir)] {:recursive true})
+              (is (= 1 @embedded)))))))))
 
 ;; ── the mutation lock ───────────────────────────────────────────────────────
 ;; Before this, clear and prune ran straight through an index in flight. A clear

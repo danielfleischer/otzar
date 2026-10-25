@@ -43,6 +43,8 @@
                                      when non-nil — chunks indexed before locators omit them)
     text      TextField          stored, indexed  ← the only analyzed field; BM25 here
     content_sha1 StoredField      stored only (retrieved by doc_id for reindex checks)
+    content_key  StringField      indexed only, same value (vectors-by-content looks it up
+                                  to carry a moved file's vectors over)
     model_spec   StoredField      stored only (embedding-model identity; reindex invalidation)
 
   ─────────────────────────────────────────────────────────────────────────────
@@ -68,7 +70,7 @@
     index in one call (deleteAll) — the full reset behind `otzar admin clear`."
   (:import [org.apache.lucene.store FSDirectory]
            [org.apache.lucene.index IndexWriter IndexWriterConfig LeafReaderContext
-            MultiTerms Term TieredMergePolicy VectorSimilarityFunction]
+            MultiTerms ReaderUtil Term TieredMergePolicy VectorSimilarityFunction]
            [org.apache.lucene.document Document Field$Store StringField TextField
             LongPoint IntPoint StoredField NumericDocValuesField KnnFloatVectorField]
            [org.apache.lucene.analysis.standard StandardAnalyzer]
@@ -125,8 +127,14 @@
     (.add doc (TextField. "text" text Field$Store/YES))
     ;; content_sha1 lets a reindex detect an unchanged file and skip re-embedding
     ;; (rag.index/file->chunks). Stored only — looked up by the indexed doc_id.
+    ;; content_key is the same hash, indexed, so a file seen at a new path (moved or
+    ;; renamed) can find its old chunks by content — see vectors-by-content. It is a
+    ;; separate field because Lucene won't let an existing field's index options
+    ;; change: making content_sha1 itself indexed fails on every index that already
+    ;; has it. Chunks written before content_key aren't findable until re-embedded.
     (when content_sha1
-      (.add doc (StoredField. "content_sha1" ^String content_sha1)))
+      (.add doc (StoredField. "content_sha1" ^String content_sha1))
+      (.add doc (StringField. "content_key" ^String content_sha1 Field$Store/NO)))
     ;; model_spec records the embedding-model identity (name@digest/dim) behind
     ;; :embedding, so a reindex can invalidate stale vectors after a model change
     ;; instead of skipping the file as unchanged (rag.index/file->chunks). Stored only.
@@ -364,6 +372,47 @@
             {:mtime        (field-long doc "mtime")
              :content_sha1 (.get doc "content_sha1")
              :model_spec   (.get doc "model_spec")})))
+      (finally
+        (.release manager searcher)))))
+
+;; FloatVectorValues hands back a buffer it reuses on the next read, hence aclone.
+(defn- stored-vector
+  "The `embedding` vector of top-level doc `docid`, read from its segment, or nil
+  when the doc has none (keyword-only chunks)."
+  [leaves ^long docid]
+  (let [^LeafReaderContext leaf (.get ^java.util.List leaves (ReaderUtil/subIndex (int docid) ^java.util.List leaves))
+        local (int (- docid (.docBase leaf)))]
+    (when-let [fvv (.getFloatVectorValues (.reader leaf) "embedding")]
+      (let [it (.iterator fvv)]
+        (when (= local (.advance it local))
+          (aclone (.vectorValue fvv (.index it))))))))
+
+(defn vectors-by-content
+  "component, content-sha1:str, model-spec:str -> {chunk-text float[]} | nil
+  The stored vectors of every live chunk whose source text hashed to
+  `content-sha1` and that was embedded under `model-spec`, keyed by chunk text, or
+  nil if there are none. This is how a moved or renamed file skips the embedder:
+  its new path is a new doc_id with no prior, but its content is already in the
+  index under the old one. Keying by chunk text rather than chunk_idx means a move
+  that chunks differently (an extension change picks another locator) simply
+  misses, instead of pairing vectors with the wrong text. Thread-safe, like
+  doc-meta."
+  [{:keys [^SearcherManager manager]} content-sha1 model-spec]
+  (let [searcher (.acquire manager)]
+    (try
+      (let [reader (.getIndexReader searcher)
+            leaves (.leaves reader)
+            stored (.storedFields searcher)
+            sds    (.scoreDocs (.search searcher (TermQuery. (Term. "content_key" ^String content-sha1))
+                                        (int (max 1 (.maxDoc reader)))))]
+        (not-empty
+         (into {}
+               (keep (fn [^org.apache.lucene.search.ScoreDoc sd]
+                       (let [doc (.document stored (.doc sd))]
+                         (when (= model-spec (.get doc "model_spec"))
+                           (when-let [v (stored-vector leaves (.doc sd))]
+                             [(.get doc "text") v])))))
+               sds)))
       (finally
         (.release manager searcher)))))
 

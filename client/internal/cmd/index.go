@@ -104,10 +104,11 @@ Each tree keeps the --recursive setting it was indexed with.`,
 // /paths with /index.
 //
 // Deleted files are the one thing an index run can't notice (it walks what is
-// there, not what is missing), so this prunes first — but only when every root is
-// still on disk. A vanished root (an unmounted volume) makes its whole subtree
-// look orphaned, and dropping it would be a mass deletion the user never asked
-// for. That's the same guard the server-side watch sweep applies.
+// there, not what is missing), so this prunes too — after indexing, so a moved
+// file's new path can still find its old chunks and reuse their vectors instead
+// of re-embedding — but only when every root is still on disk. A vanished root
+// (an unmounted volume) makes its whole subtree look orphaned, and dropping it
+// would be a mass deletion the user never asked for. That's the same guard the server-side watch sweep applies.
 func indexKnownRoots(c *api.Client) error {
 	roots, err := c.Roots()
 	if err != nil {
@@ -130,15 +131,6 @@ func indexKnownRoots(c *api.Client) error {
 		} else {
 			flat = append(flat, r.Path)
 		}
-	}
-
-	pruned := 0
-	if missing == 0 {
-		p, err := c.Prune(false)
-		if err != nil {
-			return err
-		}
-		pruned = len(p.Removed)
 	}
 
 	// One stream per recursive flag; the bar accumulates across both.
@@ -165,6 +157,15 @@ func indexKnownRoots(c *api.Client) error {
 		total.Cancelled = total.Cancelled || res.Cancelled
 	}
 	bar.finish()
+
+	pruned := 0
+	if missing == 0 {
+		p, err := c.Prune(false)
+		if err != nil {
+			return err
+		}
+		pruned = len(p.Removed)
+	}
 
 	if indexJSON {
 		return render.JSON(total)

@@ -130,12 +130,16 @@
   re-embed even when the bytes are untouched. Given a reusable prior: if the file's
   mtime still matches, it's skipped *without even reading it*; otherwise we read +
   hash and still skip if the content sha1 matches (an mtime bump with no real edit).
+  A file with no reusable prior may still be content we already embedded under
+  another path — moved or renamed. Before embedding, its chunks are looked up by
+  content hash + spec (lucene/vectors-by-content); if every chunk's text is found,
+  those vectors are carried over and the embedder is skipped.
   Only genuinely new/changed/re-modelled files reach the embedder, whose vectors are
   attached as :embedding; every chunk also carries :content_sha1 and :model_spec for
   next time. (A change in embedding *dimension* additionally requires a full reset
   — `otzar admin clear`, then re-index — since Lucene stores one vector dimension
   per field.)
-  `force?` bypasses all of that: every file is re-extracted, re-chunked and
+  `force?` bypasses all of that, the content lookup included: every file is re-extracted, re-chunked and
   re-embedded even when nothing changed. It's the escape hatch for changes the
   content/model gate can't see — a new chunker or a chunk-schema field (e.g. adding
   :loc_start/:loc_end): the bytes and model are identical, so only an explicit
@@ -170,10 +174,13 @@
                   chunks (chunker/pack (segmenter/segment text loc))]
               (if (empty? chunks)
                 nothing
-                (let [_        (on-progress {:type "file-start" :path path :total (count chunks)})
-                      on-batch (fn [done total]
-                                 (on-progress {:type "chunk" :path path :done done :total total}))
-                      vecs     (embed/embed-documents (map :text chunks) cancelled? on-batch)]
+                (let [moved    (when-not force? (lucene/vectors-by-content component csha spec))
+                      vecs     (if (every? #(contains? moved (:text %)) chunks)
+                                 (mapv #(get moved (:text %)) chunks)
+                                 (let [_        (on-progress {:type "file-start" :path path :total (count chunks)})
+                                       on-batch (fn [done total]
+                                                  (on-progress {:type "chunk" :path path :done done :total total}))]
+                                   (embed/embed-documents (map :text chunks) cancelled? on-batch)))]
                   (mapv (fn [{:keys [chunk_idx text loc_start loc_end]} embedding]
                           {:id           (str doc-id ":" chunk_idx)
                            :doc_id       doc-id
@@ -444,7 +451,9 @@
     :kept     how many indexed files remain
     :dry_run  present and true only for a dry run
   Detection is disk-existence only: a moved file shows up as an orphan at its old
-  path (and, once you reindex the new location, as a fresh file there). Runs on the
+  path (and, once you reindex the new location, as a fresh file there — which
+  reuses the old path's vectors only if this hasn't dropped them yet, so callers
+  reindex first and prune after). Runs on the
   caller's thread; no embedding, just a stat() per indexed file.
 
   A real prune takes the mutation lock and throws :index-busy if an index run holds
@@ -549,15 +558,18 @@
   making a background tick wait on (or fight with) work the user asked for.
 
   Otherwise, when at least one root is recorded:
-    - Prune orphans, but ONLY when every root still exists on disk. This is the
-      safety valve against mass deletion: if a root has vanished (an unmounted
-      volume, a moved directory) every file under it would look like an orphan, so
-      rather than delete a whole subtree we skip pruning this tick and leave it to a
-      manual `otzar admin prune`. A genuine single-file delete is picked up on the
-      next sweep once the picture is unambiguous.
     - Re-index every present root. The change gate in file->chunks makes an
       unchanged tree cheap — a stat + doc-meta lookup per file, no embedding, so the
       Ollama model is never loaded — and only real changes reach the embedder.
+    - Then prune orphans, but ONLY when every root still exists on disk. Then, not
+      first: a moved file's old path is an orphan, and its chunks are what lets the
+      new path reuse their vectors instead of re-embedding (see file->chunks). The
+      all-present condition is the safety valve against mass deletion: if a root
+      has vanished (an unmounted volume, a moved directory) every file under it
+      would look like an orphan, so rather than delete a whole subtree we skip
+      pruning this tick and leave it to a manual `otzar admin prune`. A genuine
+      single-file delete is picked up on the next sweep once the picture is
+      unambiguous.
   With no roots recorded yet it is a no-op (never prunes), so a pre-existing index
   is untouched until the user indexes something and populates roots.edn.
 
@@ -579,14 +591,14 @@
            :removed_files 0 :errors []}
           (let [present  (filterv #(.exists (io/file ^String (:path %))) all-roots)
                 all?     (= (count present) (count all-roots))
-                pruned   (when all? (:removed (prune! {})))
                 by-rec   (group-by :recursive present)
                 run      (fn [rs recursive]
                            (when (seq rs)
                              (index-paths! (mapv :path rs) {:recursive recursive})))
                 results  (remove nil? [(run (get by-rec true) true)
                                        (run (get by-rec false) false)])
-                sum      (fn [k] (reduce + (map #(get % k 0) results)))]
+                pruned   (when all? (:removed (prune! {})))
+                sum     (fn [k] (reduce + (map #(get % k 0) results)))]
             {:roots         (count all-roots)
              :present       (count present)
              :pruned        (vec pruned)
