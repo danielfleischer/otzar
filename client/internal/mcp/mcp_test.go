@@ -3,6 +3,7 @@ package mcp_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -155,6 +157,13 @@ func TestSearch(t *testing.T) {
 	if !strings.Contains(txt, "d1:0") || !strings.Contains(txt, "/notes/rag.md") {
 		t.Errorf("search result missing id/path; got: %s", txt)
 	}
+	// The chunk id only reads the chunk; doc_id is what reaches the whole file.
+	if !strings.Contains(txt, `"doc_id":"d1"`) {
+		t.Errorf("search result missing doc_id; got: %s", txt)
+	}
+	if want := time.UnixMilli(1).Format("2006-01-02"); !strings.Contains(txt, `"modified":"`+want+`"`) {
+		t.Errorf("search result missing modified date %s; got: %s", want, txt)
+	}
 }
 
 func TestGetDocument(t *testing.T) {
@@ -202,5 +211,34 @@ func TestListIndexedPaths(t *testing.T) {
 	txt := resultText(t, res)
 	if !strings.Contains(txt, "/notes/rag.md") || !strings.Contains(txt, "/src/core.clj") {
 		t.Errorf("paths result missing entries; got: %s", txt)
+	}
+}
+
+func TestCancelledToolCallAbandonsTheHTTPRequest(t *testing.T) {
+	arrived, abandoned := make(chan struct{}), make(chan struct{})
+	mux := http.NewServeMux()
+	mux.HandleFunc("/query", func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body) // net/http only watches for a disconnect after this
+		close(arrived)
+		select {
+		case <-r.Context().Done():
+			close(abandoned)
+		case <-time.After(5 * time.Second):
+		}
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	session := connect(t, context.Background(), clientFor(t, ts))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go session.CallTool(ctx, &mcpsdk.CallToolParams{Name: "search", Arguments: map[string]any{"q": "x"}})
+
+	<-arrived
+	cancel()
+	select {
+	case <-abandoned:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the HTTP request outlived the cancelled tool call")
 	}
 }

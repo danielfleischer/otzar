@@ -56,6 +56,16 @@ type Client struct {
 	http    *http.Client
 	timeout time.Duration
 	stall   time.Duration
+	ctx     context.Context // nil means context.Background(); see WithContext
+}
+
+// WithContext returns a copy of c whose unary requests also stop when ctx does,
+// on top of the usual total deadline. The MCP tools use it so that a host
+// cancelling a tool call abandons the HTTP request behind it.
+func (c *Client) WithContext(ctx context.Context) *Client {
+	bound := *c
+	bound.ctx = ctx
+	return &bound
 }
 
 // DefaultTimeout is New's total budget for a unary request. A variable rather
@@ -82,7 +92,10 @@ func NewWithTimeout(d time.Duration) (*Client, error) {
 // caller must defer the returned cancel func, and may only do so once the
 // response body has been read — cancelling closes the body.
 func (c *Client) request(method, path string, body io.Reader) (*http.Request, context.CancelFunc, error) {
-	ctx, cancel := context.Background(), context.CancelFunc(func() {})
+	ctx, cancel := c.ctx, context.CancelFunc(func() {})
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if c.timeout > 0 {
 		ctx, cancel = context.WithTimeout(ctx, c.timeout)
 	}
